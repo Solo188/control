@@ -16,6 +16,11 @@ public class MyAccessibilityService extends AccessibilityService {
         return instance;
     }
 
+    // Тот самый недостающий метод, который ждет MainActivity
+    public static boolean isRunning() {
+        return instance != null;
+    }
+
     @Override
     protected void onServiceConnected() {
         super.onServiceConnected();
@@ -72,7 +77,6 @@ public class MyAccessibilityService extends AccessibilityService {
     }
 
     public void performLongPress(float xPercent, float yPercent) {
-        // Длинное нажатие - это просто свайп в ту же точку с длительностью 1000мс
         performSwipe(xPercent, yPercent, xPercent, yPercent, 1000);
     }
 
