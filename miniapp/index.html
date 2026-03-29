@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>RemoteControl Panel</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  /* ─── Fonts ─── */
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Space+Grotesk:wght@400;500;700&display=swap');
+
+  :root {
+    --bg:        #0d0f14;
+    --surface:   #161923;
+    --border:    #252a35;
+    --accent:    #00e5ff;
+    --accent2:   #7c3aed;
+    --danger:    #ff4757;
+    --success:   #2ed573;
+    --text:      #e2e8f0;
+    --muted:     #64748b;
+    --radius:    12px;
+    --glow:      0 0 20px rgba(0,229,255,0.15);
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Space Grotesk', sans-serif;
+    min-height: 100vh;
+    overflow-x: hidden;
+    padding-bottom: 32px;
+  }
+
+  /* ─── Header ─── */
+  .header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 20px 16px 14px;
+    border-bottom: 1px solid var(--border);
+    background: linear-gradient(135deg, #0d0f14 0%, #161923 100%);
+  }
+  .header-icon {
+    width: 36px; height: 36px;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    border-radius: 10px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 18px;
+    box-shadow: var(--glow);
+  }
+  .header h1 {
+    font-size: 18px; font-weight: 700;
+    background: linear-gradient(90deg, var(--accent), var(--accent2));
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  }
+  .status-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--success);
+    box-shadow: 0 0 8px var(--success);
+    margin-left: auto;
+    animation: pulse 2s infinite;
+  }
+  @keyframes pulse {
+    0%,100% { opacity:1; transform: scale(1); }
+    50%      { opacity:0.5; transform: scale(0.8); }
+  }
+
+  /* ─── Section ─── */
+  .section { padding: 16px 16px 0; }
+  .section-title {
+    font-size: 11px; font-weight: 600; letter-spacing: 1.5px;
+    color: var(--muted); text-transform: uppercase; margin-bottom: 10px;
+  }
+
+  /* ─── Touch Canvas ─── */
+  .canvas-wrap {
+    position: relative;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    touch-action: none;
+    user-select: none;
+  }
+  #touchCanvas {
+    display: block;
+    width: 100%;
+    aspect-ratio: 9/16;
+    cursor: crosshair;
+  }
+  .canvas-overlay {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    pointer-events: none;
+  }
+  .canvas-hint {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px; color: var(--muted);
+    background: rgba(13,15,20,0.7);
+    padding: 4px 10px; border-radius: 6px;
+  }
+  #coordsDisplay {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px; color: var(--accent);
+    background: rgba(13,15,20,0.85);
+    padding: 4px 10px; border-radius: 6px;
+    margin-top: 6px;
+  }
+
+  /* ─── Mode Selector ─── */
+  .mode-selector {
+    display: flex; gap: 8px; margin-bottom: 12px;
+  }
+  .mode-btn {
+    flex: 1; padding: 10px 8px;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); color: var(--muted);
+    font-family: 'Space Grotesk', sans-serif; font-size: 13px; font-weight: 500;
+    cursor: pointer; transition: all 0.2s;
+    text-align: center;
+  }
+  .mode-btn.active {
+    border-color: var(--accent); color: var(--accent);
+    background: rgba(0,229,255,0.06);
+    box-shadow: var(--glow);
+  }
+
+  /* ─── Quick Actions Grid ─── */
+  .actions-grid {
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;
+    margin-bottom: 14px;
+  }
+  .action-btn {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 6px;
+    padding: 14px 8px;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); color: var(--text);
+    font-family: 'Space Grotesk', sans-serif; font-size: 12px; font-weight: 500;
+    cursor: pointer; transition: all 0.15s; -webkit-tap-highlight-color: transparent;
+    min-height: 72px;
+  }
+  .action-btn:active { transform: scale(0.95); background: #1e2433; }
+  .action-btn .icon { font-size: 22px; }
+  .action-btn.danger { border-color: rgba(255,71,87,0.3); color: var(--danger); }
+  .action-btn.primary { border-color: rgba(0,229,255,0.3); color: var(--accent); }
+  .action-btn.accent2 { border-color: rgba(124,58,237,0.3); color: #a78bfa; }
+
+  /* ─── Swipe Controls ─── */
+  .swipe-pad {
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px;
+    max-width: 220px; margin: 0 auto 14px;
+  }
+  .swipe-btn {
+    padding: 16px; background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); color: var(--text);
+    font-size: 20px; cursor: pointer; text-align: center;
+    transition: all 0.15s; -webkit-tap-highlight-color: transparent;
+  }
+  .swipe-btn:active { transform: scale(0.9); background: #1e2433; }
+  .swipe-btn.center { background: rgba(0,229,255,0.05); border-color: var(--accent); }
+
+  /* ─── Log ─── */
+  .log-box {
+    background: #0a0c10; border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 10px 12px; height: 100px; overflow-y: auto;
+    font-family: 'JetBrains Mono', monospace; font-size: 11px;
+    line-height: 1.7; color: var(--muted);
+  }
+  .log-box .log-entry { display: block; }
+  .log-box .log-ok   { color: var(--success); }
+  .log-box .log-err  { color: var(--danger); }
+  .log-box .log-info { color: var(--accent); }
+</style>
+</head>
+<body>
+
+<!-- Header -->
+<div class="header">
+  <div class="header-icon">🖥</div>
+  <h1>RemoteControl</h1>
+  <div class="status-dot"></div>
+</div>
+
+<!-- Touch Panel -->
+<div class="section">
+  <div class="section-title">Сенсорная панель</div>
+
+  <div class="mode-selector">
+    <button class="mode-btn active" onclick="setMode('tap')" id="modeTap">👆 Tap</button>
+    <button class="mode-btn" onclick="setMode('swipe')" id="modeSwipe">👉 Swipe</button>
+    <button class="mode-btn" onclick="setMode('longpress')" id="modeLong">✋ Hold</button>
+  </div>
+
+  <div class="canvas-wrap">
+    <canvas id="touchCanvas"></canvas>
+    <div class="canvas-overlay">
+      <div class="canvas-hint" id="canvasHint">Нажми для отправки координат</div>
+      <div id="coordsDisplay">—</div>
+    </div>
+  </div>
+</div>
+
+<!-- Navigation Swipes -->
+<div class="section" style="margin-top:16px">
+  <div class="section-title">Быстрые свайпы</div>
+  <div class="swipe-pad">
+    <div></div>
+    <div class="swipe-btn" onclick="sendSwipe(0.5,0.8,0.5,0.2)">↑</div>
+    <div></div>
+    <div class="swipe-btn" onclick="sendSwipe(0.8,0.5,0.2,0.5)">←</div>
+    <div class="swipe-btn center" onclick="sendAction('screenshot')">📸</div>
+    <div class="swipe-btn" onclick="sendSwipe(0.2,0.5,0.8,0.5)">→</div>
+    <div></div>
+    <div class="swipe-btn" onclick="sendSwipe(0.5,0.2,0.5,0.8)">↓</div>
+    <div></div>
+  </div>
+</div>
+
+<!-- Quick Actions -->
+<div class="section">
+  <div class="section-title">Системные действия</div>
+  <div class="actions-grid">
+    <button class="action-btn primary" onclick="sendAction('screenshot')">
+      <span class="icon">📸</span>Screenshot
+    </button>
+    <button class="action-btn" onclick="sendAction('home')">
+      <span class="icon">🏠</span>Home
+    </button>
+    <button class="action-btn" onclick="sendAction('back')">
+      <span class="icon">◀️</span>Back
+    </button>
+    <button class="action-btn" onclick="sendAction('recents')">
+      <span class="icon">📋</span>Recents
+    </button>
+    <button class="action-btn accent2" onclick="sendAction('notifications')">
+      <span class="icon">🔔</span>Notify
+    </button>
+    <button class="action-btn danger" onclick="sendTap(0.5,0.5)">
+      <span class="icon">🎯</span>Center Tap
+    </button>
+  </div>
+</div>
+
+<!-- Log -->
+<div class="section" style="margin-top:16px">
+  <div class="section-title">Лог команд</div>
+  <div class="log-box" id="logBox">
+    <span class="log-entry log-info">▶ Mini App ready</span>
+  </div>
+</div>
+
+<script>
+const tg = window.Telegram?.WebApp;
+if (tg) { tg.ready(); tg.expand(); }
+
+// ─── State ───
+let mode = 'tap';
+let swipeStart = null;
+
+// ─── Canvas Setup ───
+const canvas = document.getElementById('touchCanvas');
+const ctx = canvas.getContext('2d');
+
+function resizeCanvas() {
+  const rect = canvas.getBoundingClientRect();
+  canvas.width  = rect.width  * devicePixelRatio;
+  canvas.height = rect.height * devicePixelRatio;
+  ctx.scale(devicePixelRatio, devicePixelRatio);
+  drawGrid();
+}
+
+function drawGrid() {
+  const w = canvas.getBoundingClientRect().width;
+  const h = canvas.getBoundingClientRect().height;
+  ctx.clearRect(0, 0, w, h);
+  ctx.strokeStyle = 'rgba(255,255,255,0.04)';
+  ctx.lineWidth = 0.5;
+  for (let i = 1; i < 10; i++) {
+    ctx.beginPath(); ctx.moveTo(w * i / 10, 0); ctx.lineTo(w * i / 10, h); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, h * i / 10); ctx.lineTo(w, h * i / 10); ctx.stroke();
+  }
+  // Center cross
+  ctx.strokeStyle = 'rgba(0,229,255,0.15)';
+  ctx.lineWidth = 0.8;
+  ctx.beginPath(); ctx.moveTo(w/2, 0); ctx.lineTo(w/2, h); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(0, h/2); ctx.lineTo(w, h/2); ctx.stroke();
+}
+
+window.addEventListener('resize', resizeCanvas);
+setTimeout(resizeCanvas, 50);
+
+// ─── Touch / Click Handling ───
+function getRelCoords(e, element) {
+  const rect = element.getBoundingClientRect();
+  const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+  const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+  return {
+    x: (clientX - rect.left) / rect.width,
+    y: (clientY - rect.top)  / rect.height
+  };
+}
+
+function drawDot(xPct, yPct, color = '#00e5ff') {
+  const rect = canvas.getBoundingClientRect();
+  const px = xPct * rect.width;
+  const py = yPct * rect.height;
+  ctx.beginPath();
+  ctx.arc(px, py, 8, 0, Math.PI * 2);
+  ctx.fillStyle = color + '55';
+  ctx.fill();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 2;
+  ctx.stroke();
+}
+
+canvas.addEventListener('touchstart', e => { e.preventDefault(); onPointerDown(e); }, { passive: false });
+canvas.addEventListener('mousedown', onPointerDown);
+canvas.addEventListener('touchend', e => { e.preventDefault(); onPointerUp(e); }, { passive: false });
+canvas.addEventListener('mouseup', onPointerUp);
+canvas.addEventListener('touchmove', e => { e.preventDefault(); onPointerMove(e); }, { passive: false });
+canvas.addEventListener('mousemove', onPointerMove);
+
+function onPointerDown(e) {
+  const pos = getRelCoords(e, canvas);
+  if (mode === 'swipe') {
+    swipeStart = pos;
+    drawDot(pos.x, pos.y, '#7c3aed');
+  }
+  document.getElementById('coordsDisplay').textContent =
+    `x:${pos.x.toFixed(3)}  y:${pos.y.toFixed(3)}`;
+}
+
+function onPointerMove(e) {
+  const pos = getRelCoords(e, canvas);
+  document.getElementById('coordsDisplay').textContent =
+    `x:${pos.x.toFixed(3)}  y:${pos.y.toFixed(3)}`;
+}
+
+function onPointerUp(e) {
+  const touches = e.changedTouches;
+  const fakeE = touches ? { clientX: touches[0].clientX, clientY: touches[0].clientY } : e;
+  const pos = getRelCoords(fakeE, canvas);
+  resizeCanvas(); // Redraw grid
+
+  if (mode === 'tap') {
+    drawDot(pos.x, pos.y);
+    sendTap(pos.x, pos.y);
+  } else if (mode === 'swipe' && swipeStart) {
+    drawDot(swipeStart.x, swipeStart.y, '#7c3aed');
+    drawDot(pos.x, pos.y, '#00e5ff');
+    // Draw swipe line
+    const rect = canvas.getBoundingClientRect();
+    ctx.beginPath();
+    ctx.moveTo(swipeStart.x * rect.width, swipeStart.y * rect.height);
+    ctx.lineTo(pos.x * rect.width, pos.y * rect.height);
+    ctx.strokeStyle = 'rgba(0,229,255,0.4)';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    sendSwipe(swipeStart.x, swipeStart.y, pos.x, pos.y);
+    swipeStart = null;
+  } else if (mode === 'longpress') {
+    drawDot(pos.x, pos.y, '#f59e0b');
+    sendLongPress(pos.x, pos.y);
+  }
+}
+
+// ─── Mode ───
+function setMode(m) {
+  mode = m;
+  document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
+  const hints = { tap:'Нажми для клика', swipe:'Проведи для свайпа', longpress:'Нажми для удержания' };
+  document.getElementById('mode' + m.charAt(0).toUpperCase() + m.slice(1)).classList.add('active');
+  document.getElementById('canvasHint').textContent = hints[m] || '';
+}
+
+// ─── Send Commands ───
+function send(payload) {
+  const json = JSON.stringify(payload);
+  log(`→ ${json}`, 'log-info');
+  if (tg?.sendData) {
+    tg.sendData(json);
+  } else {
+    log('⚠ Telegram WebApp API недоступен (режим браузера)', 'log-err');
+  }
+}
+
+function sendTap(x, y) {
+  send({ a: 'tap', x: round(x), y: round(y) });
+}
+
+function sendSwipe(x1, y1, x2, y2, dur) {
+  const payload = { a: 'swipe', x1: round(x1), y1: round(y1), x2: round(x2), y2: round(y2) };
+  if (dur) payload.dur = dur;
+  send(payload);
+}
+
+function sendLongPress(x, y) {
+  send({ a: 'longpress', x: round(x), y: round(y) });
+}
+
+function sendAction(action) {
+  send({ a: action });
+  log(`→ action: ${action}`, 'log-info');
+}
+
+function round(n) { return Math.round(n * 1000) / 1000; }
+
+// ─── Log ───
+function log(msg, cls = '') {
+  const box = document.getElementById('logBox');
+  const span = document.createElement('span');
+  span.className = 'log-entry ' + cls;
+  const ts = new Date().toLocaleTimeString('ru', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  span.textContent = `[${ts}] ${msg}`;
+  box.appendChild(document.createElement('br'));
+  box.appendChild(span);
+  box.scrollTop = box.scrollHeight;
+}
+</script>
+</body>
+</html>
