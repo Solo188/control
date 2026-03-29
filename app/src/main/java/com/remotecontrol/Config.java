@@ -1,12 +1,19 @@
 package com.remotecontrol;
 
+/**
+ * Config — единственное место для настройки сервера.
+ * Замени BASE_URL на актуальный адрес из bore.
+ */
 public final class Config {
     private Config() {}
 
-    // Твой адрес из bore (обязательно с http://)
-    public static final String SERVER_URL = "http://bore.pub:56485";
-    
-    // Заглушки, чтобы MainActivity не выдавала ошибки
-    public static final String BOT_TOKEN = "bore_mode";
-    public static final String MINI_APP_URL = "http://github.io"; 
+    /**
+     * Адрес твоего HTTP-сервера через bore.
+     * Пример: "http://bore.pub:56485"
+     */
+    public static final String BASE_URL = "http://bore.pub:56485";
+
+    /** Эндпоинты */
+    public static final String ENDPOINT_GET_COMMAND = BASE_URL + "/get_command";
+    public static final String ENDPOINT_UPLOAD      = BASE_URL + "/upload";
 }

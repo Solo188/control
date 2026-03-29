@@ -6,7 +6,6 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.PowerManager;
 import android.provider.Settings;
-import android.view.View;
 import android.widget.Button;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -15,8 +14,7 @@ import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.NotificationManagerCompat;
 
 /**
- * MainActivity — первичный экран настройки.
- * Показывает статус разрешений и позволяет их включить.
+ * MainActivity — экран настройки и статуса.
  */
 public class MainActivity extends AppCompatActivity {
 
@@ -30,13 +28,13 @@ public class MainActivity extends AppCompatActivity {
         tvStatus = findViewById(R.id.tvStatus);
 
         Button btnStartService = findViewById(R.id.btnStartService);
-        btnStartService.setOnClickListener(v -> startTelegramService());
+        btnStartService.setOnClickListener(v -> startControlService());
 
         Button btnAccessibility = findViewById(R.id.btnAccessibility);
         btnAccessibility.setOnClickListener(v -> openAccessibilitySettings());
 
-        Button btnBatteryOptimization = findViewById(R.id.btnBatteryOptimization);
-        btnBatteryOptimization.setOnClickListener(v -> requestIgnoreBatteryOptimization());
+        Button btnBattery = findViewById(R.id.btnBatteryOptimization);
+        btnBattery.setOnClickListener(v -> requestIgnoreBatteryOptimization());
     }
 
     @Override
@@ -45,14 +43,16 @@ public class MainActivity extends AppCompatActivity {
         updateStatus();
     }
 
-    private void startTelegramService() {
+    // ──────────────────────────────────────────────────
+
+    private void startControlService() {
         Intent intent = new Intent(this, TelegramService.class);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             startForegroundService(intent);
         } else {
             startService(intent);
         }
-        Toast.makeText(this, "TelegramService запущен", Toast.LENGTH_SHORT).show();
+        Toast.makeText(this, "Сервис запущен", Toast.LENGTH_SHORT).show();
         updateStatus();
     }
 
@@ -67,20 +67,19 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void updateStatus() {
-        boolean a11y = MyAccessibilityService.isRunning();
-        boolean notif = NotificationManagerCompat.from(this).areNotificationsEnabled();
+        boolean a11y    = MyAccessibilityService.isRunning();
+        boolean notif   = NotificationManagerCompat.from(this).areNotificationsEnabled();
+        boolean polling = TelegramService.getInstance() != null;
+
         PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
         boolean battery = pm.isIgnoringBatteryOptimizations(getPackageName());
 
         StringBuilder sb = new StringBuilder();
-        sb.append("🤖 Bot Token: ").append(
-                Config.BOT_TOKEN.isEmpty() || Config.BOT_TOKEN.equals("YOUR_BOT_TOKEN")
-                        ? "❌ Не задан" : "✅ Задан"
-        ).append("\n");
-        sb.append("♿ AccessibilityService: ").append(a11y ? "✅ Активен" : "❌ Выключен").append("\n");
-        sb.append("🔔 Уведомления: ").append(notif ? "✅" : "❌").append("\n");
-        sb.append("🔋 Игнорирование батареи: ").append(battery ? "✅" : "⚠️").append("\n");
-        sb.append("📡 MiniApp URL: ").append(Config.MINI_APP_URL);
+        sb.append("🌐 Сервер:      ").append(Config.BASE_URL).append("\n");
+        sb.append("📡 Polling:     ").append(polling ? "✅ Активен" : "❌ Остановлен").append("\n");
+        sb.append("♿ A11yService: ").append(a11y    ? "✅ Активен" : "❌ Выключен").append("\n");
+        sb.append("🔔 Уведомления: ").append(notif   ? "✅" : "❌").append("\n");
+        sb.append("🔋 Батарея:     ").append(battery  ? "✅ Игнорируется" : "⚠️ Оптимизация вкл.");
 
         tvStatus.setText(sb.toString());
     }

