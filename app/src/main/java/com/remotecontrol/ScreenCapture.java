@@ -30,13 +30,26 @@ public class ScreenCapture {
         void onError(String message);
     }
 
-    public static void setProjection(MediaProjection projection) {
+    // Метод для инициализации проекции (вызывается из сервиса)
+    public static void initProjection(MediaProjection projection, Context context) {
         activeProjection = projection;
+        Log.i(TAG, "MediaProjection инициализирована");
+    }
+
+    // Метод для очистки ресурсов (вызывается из сервиса)
+    public static void release() {
+        releaseDisplay();
+        if (activeProjection != null) {
+            activeProjection.stop();
+            activeProjection = null;
+        }
+        Log.i(TAG, "ScreenCapture ресурсы освобождены");
     }
 
     public static void captureWithExistingProjection(Context context, long chatId, TelegramEngine engine) {
         if (activeProjection == null) {
-            Log.e(TAG, "activeProjection is null");
+            Log.e(TAG, "Ошибка: проекция не активна");
+            if (engine != null) engine.sendMessage(chatId, "❌ Ошибка: нет доступа к экрану");
             return;
         }
 
@@ -44,15 +57,15 @@ public class ScreenCapture {
             @Override
             public void onScreenshot(File file) {
                 if (engine != null) {
-                    // ИСПРАВЛЕНО: удален третий аргумент (строка)
                     engine.sendPhoto(chatId, file);
                 }
+                // Останавливаем сервис после скриншота, если это необходимо
                 context.stopService(new Intent(context, ScreenCaptureService.class));
             }
 
             @Override
             public void onError(String message) {
-                Log.e(TAG, "Screenshot error: " + message);
+                Log.e(TAG, "Ошибка скриншота: " + message);
                 if (engine != null) {
                     engine.sendMessage(chatId, "❌ Ошибка захвата: " + message);
                 }
