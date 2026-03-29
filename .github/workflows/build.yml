@@ -1,0 +1,82 @@
+name: Build & Deploy
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:   # Ручной запуск
+
+jobs:
+  # ──────────────────────────────────────────────────────────────
+  #  JOB 1: Сборка APK
+  # ──────────────────────────────────────────────────────────────
+  build-apk:
+    name: Build APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: gradle
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      # Передаём секреты из GitHub Secrets в Gradle
+      - name: Build Debug APK
+        env:
+          BOT_TOKEN:   ${{ secrets.BOT_TOKEN }}
+          MINI_APP_URL: ${{ secrets.MINI_APP_URL }}
+        run: ./gradlew assembleDebug --stacktrace
+
+      - name: Build Release APK
+        env:
+          BOT_TOKEN:   ${{ secrets.BOT_TOKEN }}
+          MINI_APP_URL: ${{ secrets.MINI_APP_URL }}
+        run: ./gradlew assembleRelease --stacktrace
+
+      # Загружаем оба APK как артефакты
+      - name: Upload Debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: RemoteControl-debug
+          path: app/build/outputs/apk/debug/*.apk
+          retention-days: 14
+
+      - name: Upload Release APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: RemoteControl-release
+          path: app/build/outputs/apk/release/*.apk
+          retention-days: 30
+
+  # ──────────────────────────────────────────────────────────────
+  #  JOB 2: Деплой Mini App на GitHub Pages
+  # ──────────────────────────────────────────────────────────────
+  deploy-miniapp:
+    name: Deploy Mini App to GitHub Pages
+    runs-on: ubuntu-latest
+    # Запускаем только при пуше в main/master
+    if: github.event_name == 'push'
+
+    permissions:
+      contents: write  # Нужно для деплоя в gh-pages
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Deploy miniapp/ to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./miniapp      # Папка с Mini App (index.html)
+          publish_branch: gh-pages
+          destination_dir: miniapp    # URL: username.github.io/repo/miniapp/

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">RemoteControl</string>
+    <string name="accessibility_service_label">RemoteControl Accessibility</string>
+    <string name="accessibility_service_description">Позволяет удалённо управлять устройством через Telegram Bot: выполнять нажатия, свайпы и системные действия.</string>
+</resources>
