@@ -394,7 +394,7 @@ public class TelegramEngine implements Runnable {
 
             JSONObject params = new JSONObject();
             params.put("chat_id", chatId);
-            params.put("text", "🤖 *RemoteControl*\n\nВыбери действие или открой панель управления:",
+            params.put("text", "🤖 *RemoteControl*\n\nВыбери действие или открой панель управления:"
                     );
             params.put("parse_mode", "Markdown");
             params.put("reply_markup", keyboard);
