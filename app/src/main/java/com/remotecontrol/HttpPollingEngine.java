@@ -1,12 +1,8 @@
-// app/src/main/java/your/package/HttpPollingEngine.java
-
 package com.remotecontrol;
 
 import android.util.Log;
 
 import org.json.JSONObject;
-
-import java.util.concurrent.atomic.AtomicBoolean;
 
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
@@ -15,101 +11,99 @@ import okhttp3.Response;
 public class HttpPollingEngine {
 
     public interface CommandExecutor {
-        void execute(JSONObject command) throws Exception;
+        void execute(Command command);
     }
 
     public interface ScreenRequester {
-        void request(int commandId) throws Exception;
+        void request(int commandId);
     }
 
     public interface AckSender {
-        void send(int commandId);
+        void sendAck(int commandId);
+    }
+
+    public static class Command {
+        public int id;
+        public String action;
+        public double x;
+        public double y;
     }
 
     private final String baseUrl;
-    private final CommandExecutor commandExecutor;
-    private final ScreenRequester screenRequester;
+    private final CommandExecutor executor;
+    private final ScreenRequester requester;
     private final AckSender ackSender;
 
     private final OkHttpClient client = new OkHttpClient();
-    private final AtomicBoolean isBusy = new AtomicBoolean(false);
+
+    private volatile boolean running = true;
+    private volatile boolean isBusy = false;
 
     private int lastCommandId = -1;
 
     public HttpPollingEngine(String baseUrl,
-                             CommandExecutor commandExecutor,
-                             ScreenRequester screenRequester,
+                             CommandExecutor executor,
+                             ScreenRequester requester,
                              AckSender ackSender) {
         this.baseUrl = baseUrl;
-        this.commandExecutor = commandExecutor;
-        this.screenRequester = screenRequester;
+        this.executor = executor;
+        this.requester = requester;
         this.ackSender = ackSender;
     }
 
     public void start() {
         new Thread(() -> {
-            while (true) {
+            while (running) {
+                poll();
                 try {
-
-                    if (isBusy.get()) {
-                        Thread.sleep(200);
-                        continue;
-                    }
-
-                    Request request = new Request.Builder()
-                            .url(baseUrl + "/get_command")
-                            .get()
-                            .build();
-
-                    try (Response response = client.newCall(request).execute()) {
-
-                        if (!response.isSuccessful()) continue;
-
-                        String body = response.body() != null ? response.body().string() : null;
-                        if (body == null || body.isEmpty()) continue;
-
-                        JSONObject json = new JSONObject(body);
-                        int id = json.optInt("id", -1);
-
-                        if (id == -1 || id == lastCommandId) continue;
-
-                        isBusy.set(true);
-                        lastCommandId = id;
-
-                        try {
-                            commandExecutor.execute(json);
-                        } catch (Exception e) {
-                            Log.e("HttpPolling", "command error", e);
-                        }
-
-                        try {
-                            screenRequester.request(id);
-                        } catch (Exception e) {
-                            Log.e("HttpPolling", "screen error", e);
-
-                            try {
-                                ackSender.send(id);
-                            } catch (Exception ex) {
-                                Log.e("HttpPolling", "ack fallback error", ex);
-                            }
-
-                            isBusy.set(false);
-                        }
-                    }
-
-                    Thread.sleep(300);
-
-                } catch (Exception e) {
-                    Log.e("HttpPolling", "loop error", e);
-                    try {
-                        Thread.sleep(1000);
-                    } catch (InterruptedException ignored) {}
-                }
+                    Thread.sleep(1000);
+                } catch (InterruptedException ignored) {}
             }
-        }).start();
+        }, "HttpPollingThread").start();
+    }
+
+    public void stop() {
+        running = false;
+    }
+
+    private void poll() {
+        if (isBusy) return;
+
+        try {
+            Request request = new Request.Builder()
+                    .url(baseUrl + "/command")
+                    .build();
+
+            try (Response response = client.newCall(request).execute()) {
+                if (!response.isSuccessful()) return;
+
+                String body = response.body().string();
+                if (body == null || body.isEmpty()) return;
+
+                JSONObject json = new JSONObject(body);
+
+                Command command = new Command();
+                command.id = json.getInt("id");
+                command.action = json.getString("a");
+                command.x = json.optDouble("x", 0);
+                command.y = json.optDouble("y", 0);
+
+                if (command.id == lastCommandId) return;
+
+                lastCommandId = command.id;
+                isBusy = true;
+
+                executor.execute(command);
+                requester.request(command.id);
+
+            }
+
+        } catch (Exception e) {
+            Log.e("Polling", "Error", e);
+        }
     }
 
     public void onScreenSent() {
-        isBusy.set(false);
+        isBusy = false;
     }
 }
