@@ -2,101 +2,95 @@ package com.remotecontrol;
 
 import android.accessibilityservice.AccessibilityService;
 import android.accessibilityservice.GestureDescription;
-import android.content.Intent;
+import android.accessibilityservice.AccessibilityServiceInfo;
+import android.graphics.Bitmap;
+import android.graphics.ColorSpace;
+import android.graphics.HardwareBufferRenderer;
 import android.graphics.Path;
+import android.hardware.HardwareBuffer;
 import android.util.DisplayMetrics;
 import android.util.Log;
 import android.view.accessibility.AccessibilityEvent;
+import android.graphics.BitmapFactory;
+import java.io.File;
+import java.io.FileOutputStream;
 
 public class MyAccessibilityService extends AccessibilityService {
-
-    private static final String TAG = "MyA11yService";
+    private static final String TAG = "RemoteA11y";
     private static MyAccessibilityService instance;
 
     public static MyAccessibilityService getInstance() { return instance; }
-    public static boolean isRunning() { return instance != null; }
 
     @Override
     protected void onServiceConnected() {
         super.onServiceConnected();
         instance = this;
-        Log.i(TAG, "✅ Специальные возможности подключены");
+        Log.d(TAG, "✅ Service Connected");
     }
 
     @Override
     public void onAccessibilityEvent(AccessibilityEvent event) {}
+    @Override
+    public void onInterrupt() {}
 
     @Override
-    public void onInterrupt() {
-        Log.w(TAG, "⚠️ Сервис прерван");
-    }
-
-    @Override
-    public boolean onUnbind(Intent intent) {
+    public boolean onUnbind(android.content.Intent intent) {
         instance = null;
         return super.onUnbind(intent);
     }
 
-    // ── Клик ──────────────────────────────────────────
-
-    public void performClick(float xPercent, float yPercent) {
-        DisplayMetrics m = getResources().getDisplayMetrics();
-        float x = xPercent * m.widthPixels;
-        float y = yPercent * m.heightPixels;
-
-        Path path = new Path();
-        path.moveTo(x, y);
-
-        GestureDescription gesture = new GestureDescription.Builder()
-                .addStroke(new GestureDescription.StrokeDescription(path, 0, 50))
-                .build();
-
-        dispatchGesture(gesture, null, null);
-        Log.d(TAG, "Клик: " + x + "," + y);
+    // --- Выполнение действий ---
+    public void executeAction(String action) {
+        Log.d(TAG, "Executing: " + action);
+        switch (action) {
+            case "home": performGlobalAction(GLOBAL_ACTION_HOME); break;
+            case "back": performGlobalAction(GLOBAL_ACTION_BACK); break;
+            case "recents": performGlobalAction(GLOBAL_ACTION_RECENTS); break;
+            case "notifications": performGlobalAction(GLOBAL_ACTION_NOTIFICATIONS); break;
+            case "screenshot": takeAndUpload(); break;
+        }
     }
 
-    // ── Свайп ─────────────────────────────────────────
+    // --- Скриншот через Accessibility API (Android 11+) ---
+    public void takeAndUpload() {
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.R) {
+            Log.e(TAG, "Screenshot API требует Android 11+");
+            return;
+        }
 
-    public void performSwipe(float x1p, float y1p, float x2p, float y2p, long duration) {
-        DisplayMetrics m = getResources().getDisplayMetrics();
+        takeScreenshot(0, getMainExecutor(), new TakeScreenshotCallback() {
+            @Override
+            public void onSuccess(ScreenshotResult screenshotResult) {
+                HardwareBuffer buffer = screenshotResult.getHardwareBuffer();
+                Bitmap bitmap = Bitmap.wrapHardwareBuffer(buffer, ColorSpace.get(ColorSpace.Named.SRGB));
+                // Конвертируем Hardware Bitmap в программный для сжатия
+                Bitmap softwareBitmap = bitmap.copy(Bitmap.Config.ARGB_8888, false);
+                
+                new Thread(() -> {
+                    File file = saveBitmap(softwareBitmap);
+                    if (file != null) {
+                        HttpPollingEngine.getInstance().uploadScreenshot(file);
+                    }
+                    softwareBitmap.recycle();
+                    buffer.close();
+                }).start();
+            }
 
-        Path path = new Path();
-        path.moveTo(x1p * m.widthPixels,  y1p * m.heightPixels);
-        path.lineTo(x2p * m.widthPixels,  y2p * m.heightPixels);
-
-        GestureDescription gesture = new GestureDescription.Builder()
-                .addStroke(new GestureDescription.StrokeDescription(path, 0, duration))
-                .build();
-
-        dispatchGesture(gesture, null, null);
-        Log.d(TAG, "Свайп выполнен");
+            @Override
+            public void onFailure(int errorCode) {
+                Log.e(TAG, "Screenshot failed: " + errorCode);
+            }
+        });
     }
 
-    // ── Long Press (удержание на месте 800 мс) ────────
-
-    public void performLongPress(float xPercent, float yPercent) {
-        DisplayMetrics m = getResources().getDisplayMetrics();
-        float x = xPercent * m.widthPixels;
-        float y = yPercent * m.heightPixels;
-
-        Path path = new Path();
-        path.moveTo(x, y);
-
-        GestureDescription gesture = new GestureDescription.Builder()
-                .addStroke(new GestureDescription.StrokeDescription(path, 0, 800))
-                .build();
-
-        dispatchGesture(gesture, null, null);
-        Log.d(TAG, "LongPress: " + x + "," + y);
-    }
-
-    // ── Системные действия ────────────────────────────
-
-    public boolean pressHome()    { return performGlobalAction(GLOBAL_ACTION_HOME); }
-    public boolean pressBack()    { return performGlobalAction(GLOBAL_ACTION_BACK); }
-    public boolean pressRecents() { return performGlobalAction(GLOBAL_ACTION_RECENTS); }
-
-    public boolean openNotificationShade() {
-        return performGlobalAction(GLOBAL_ACTION_NOTIFICATIONS);
+    private File saveBitmap(Bitmap bmp) {
+        File f = new File(getCacheDir(), "screen.jpg");
+        try (FileOutputStream fos = new FileOutputStream(f)) {
+            bmp.compress(Bitmap.CompressFormat.JPEG, 70, fos);
+            return f;
+        } catch (Exception e) {
+            Log.e(TAG, "Save error", e);
+            return null;
+        }
     }
 }

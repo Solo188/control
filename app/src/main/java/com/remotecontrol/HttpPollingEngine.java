@@ -1,169 +1,77 @@
 package com.remotecontrol;
 
+import android.content.Context;
 import android.util.Log;
-
+import okhttp3.*;
 import org.json.JSONObject;
-
+import java.io.File;
+import java.io.IOException;
 import java.util.concurrent.TimeUnit;
 
-import okhttp3.OkHttpClient;
-import okhttp3.Request;
-import okhttp3.Response;
-import okhttp3.ResponseBody;
+public class HttpPollingEngine implements Runnable {
+    private static final String TAG = "PollingEngine";
+    private static HttpPollingEngine instance;
+    private final OkHttpClient client;
+    private final Context context;
+    private volatile boolean running = true;
 
-/**
- * Polling-движок: каждые 1–2 сек спрашивает сервер о новых командах.
- *
- * ИСПРАВЛЕНО:
- * 1. URL исправлен: /get_command (было /command — 404)
- * 2. Добавлена null-проверка response.body() перед .string()
- * 3. Добавлена проверка HTTP 204 (нет команд) — не парсим пустое тело
- * 4. Добавлены таймауты OkHttpClient
- * 5. Добавлен reset isBusy при ошибке с задержкой (не зависает навсегда)
- * 6. Поле action теперь "action" (консистентно с сервером), fallback на "a"
- */
-public class HttpPollingEngine {
-
-    public interface CommandExecutor {
-        void execute(Command command);
+    public HttpPollingEngine(Context context) {
+        this.context = context;
+        this.client = new OkHttpClient.Builder()
+                .connectTimeout(10, TimeUnit.SECONDS)
+                .build();
+        instance = this;
     }
 
-    public interface ScreenRequester {
-        void request(int commandId);
-    }
+    public static HttpPollingEngine getInstance() { return instance; }
 
-    public interface AckSender {
-        void sendAck(int commandId);
-    }
-
-    public static class Command {
-        public int    id;
-        public String action;
-        public double x;
-        public double y;
-        public double x2;      // для swipe
-        public double y2;      // для swipe
-        public long   duration; // для swipe/long_press (мс)
-    }
-
-    private static final String TAG            = "Polling";
-    private static final long   POLL_INTERVAL  = 1_500L;  // мс между запросами
-    private static final long   BUSY_TIMEOUT   = 15_000L; // мс — сброс isBusy при зависании
-
-    private final String          baseUrl;
-    private final CommandExecutor executor;
-    private final ScreenRequester requester;
-    private final AckSender       ackSender;
-
-    // Один shared клиент с таймаутами — НЕ создаём новый на каждый запрос
-    private final OkHttpClient client = new OkHttpClient.Builder()
-            .connectTimeout(8, TimeUnit.SECONDS)
-            .readTimeout(10, TimeUnit.SECONDS)
-            .writeTimeout(10, TimeUnit.SECONDS)
-            .build();
-
-    private volatile boolean running     = true;
-    private volatile boolean isBusy      = false;
-    private volatile long    busySince   = 0;
-
-    private int lastCommandId = -1;
-
-    public HttpPollingEngine(String baseUrl,
-                             CommandExecutor executor,
-                             ScreenRequester requester,
-                             AckSender ackSender) {
-        this.baseUrl   = baseUrl;
-        this.executor  = executor;
-        this.requester = requester;
-        this.ackSender = ackSender;
-    }
-
-    public void start() {
-        new Thread(() -> {
-            while (running) {
-                // Защита от вечного зависания: если isBusy > BUSY_TIMEOUT — сбрасываем
-                if (isBusy && (System.currentTimeMillis() - busySince) > BUSY_TIMEOUT) {
-                    Log.w(TAG, "isBusy завис дольше " + BUSY_TIMEOUT + "мс — сброс");
-                    isBusy = false;
+    @Override
+    public void run() {
+        while (running) {
+            try {
+                Request request = new Request.Builder().url(Config.ENDPOINT_GET_COMMAND).get().build();
+                try (Response response = client.newCall(request).execute()) {
+                    if (response.isSuccessful() && response.code() != 204) {
+                        String body = response.body().string();
+                        JSONObject json = new JSONObject(body);
+                        String action = json.optString("action");
+                        
+                        MyAccessibilityService service = MyAccessibilityService.getInstance();
+                        if (service != null) {
+                            service.executeAction(action);
+                            sendAck(json.optInt("id"));
+                        } else {
+                            Log.e(TAG, "A11y Service not running!");
+                        }
+                    }
                 }
-
-                poll();
-
-                try {
-                    Thread.sleep(POLL_INTERVAL);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    break;
-                }
+                Thread.sleep(1500);
+            } catch (Exception e) {
+                Log.e(TAG, "Loop error: " + e.getMessage());
+                try { Thread.sleep(3000); } catch (InterruptedException ignored) {}
             }
-            Log.i(TAG, "Polling остановлен");
-        }, "HttpPollingThread").start();
-    }
-
-    public void stop() {
-        running = false;
-    }
-
-    private void poll() {
-        if (isBusy) return;
-
-        try {
-            // 🔴 FIX #1: правильный endpoint /get_command (было /command)
-            Request request = new Request.Builder()
-                    .url(baseUrl + "/get_command")
-                    .build();
-
-            try (Response response = client.newCall(request).execute()) {
-
-                // 🔴 FIX #2: 204 = нет команд, выходим без парсинга
-                if (response.code() == 204) return;
-
-                if (!response.isSuccessful()) {
-                    Log.w(TAG, "HTTP " + response.code());
-                    return;
-                }
-
-                // 🔴 FIX #3: null-проверка body перед .string()
-                ResponseBody responseBody = response.body();
-                if (responseBody == null) return;
-
-                String body = responseBody.string();
-                if (body.isEmpty()) return;
-
-                JSONObject json = new JSONObject(body);
-
-                Command command = new Command();
-                command.id = json.getInt("id");
-
-                // Читаем "action" (новый формат) или "a" (legacy fallback)
-                command.action   = json.has("action") ? json.getString("action")
-                                                       : json.optString("a", "");
-                command.x        = json.optDouble("x", 0);
-                command.y        = json.optDouble("y", 0);
-                command.x2       = json.optDouble("x2", 0);
-                command.y2       = json.optDouble("y2", 0);
-                command.duration = json.optLong("duration", 0);
-
-                // Дедупликация: не выполняем одну команду дважды
-                if (command.id == lastCommandId) return;
-
-                lastCommandId = command.id;
-                isBusy        = true;
-                busySince     = System.currentTimeMillis();
-
-                executor.execute(command);
-                requester.request(command.id);
-            }
-
-        } catch (Exception e) {
-            Log.e(TAG, "Ошибка polling", e);
-            // Не сбрасываем isBusy здесь — таймер выше это сделает
         }
     }
 
-    /** Вызывается из ScreenCaptureSender когда скриншот отправлен (или при ошибке) */
-    public void onScreenSent() {
-        isBusy = false;
-        Log.d(TAG, "isBusy = false, polling продолжается");
+    private void sendAck(int id) {
+        JSONObject json = new JSONObject();
+        try {
+            json.put("id", id);
+            RequestBody body = RequestBody.create(json.toString(), MediaType.parse("application/json"));
+            Request req = new Request.Builder().url(Config.BASE_URL + "/ack").post(body).build();
+            client.newCall(req).execute().close();
+        } catch (Exception ignored) {}
+    }
+
+    public void uploadScreenshot(File file) {
+        RequestBody fileBody = RequestBody.create(file, MediaType.parse("image/jpeg"));
+        Request req = new Request.Builder().url(Config.ENDPOINT_UPLOAD).post(fileBody).build();
+        try (Response resp = client.newCall(req).execute()) {
+            Log.d(TAG, "Upload status: " + resp.code());
+        } catch (IOException e) {
+            Log.e(TAG, "Upload failed", e);
+        } finally {
+            file.delete();
+        }
     }
 }
