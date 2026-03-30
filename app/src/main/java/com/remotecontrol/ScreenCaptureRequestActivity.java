@@ -2,129 +2,43 @@
 package com.remotecontrol;
 
 import android.app.Activity;
+import android.content.Context;
+import android.content.Intent;
 import android.graphics.Bitmap;
-import android.graphics.PixelFormat;
-import android.media.Image;
-import android.media.ImageReader;
-import android.media.projection.MediaProjection;
 import android.os.Bundle;
-import android.util.DisplayMetrics;
-import android.util.Log;
-import android.view.WindowManager;
-import android.hardware.display.DisplayManager;
-import android.hardware.display.VirtualDisplay;
-
-import java.nio.ByteBuffer;
 
 public class ScreenCaptureRequestActivity extends Activity {
 
-    public static ScreenCaptureSender sender;
-    public static int pendingCommandId = -1;
-    public static MediaProjection mediaProjection;
+    private static int pendingCommandId;
+    private static HttpPollingEngine engine;
 
-    private ImageReader imageReader;
-    private VirtualDisplay virtualDisplay;
+    public static void request(Context ctx, int commandId) {
+        pendingCommandId = commandId;
+        Intent i = new Intent(ctx, ScreenCaptureRequestActivity.class);
+        i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        ctx.startActivity(i);
+    }
+
+    public static void setEngine(HttpPollingEngine e) {
+        engine = e;
+    }
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        try {
-            if (mediaProjection == null) {
-                Log.e("ScreenCapture", "MediaProjection is null");
-                finish();
-                return;
-            }
+        // ⚠️ ТУТ должен быть реальный захват экрана
+        // пока заглушка:
 
-            startCapture();
+        Bitmap fakeBitmap = Bitmap.createBitmap(100, 100, Bitmap.Config.ARGB_8888);
 
-        } catch (Exception e) {
-            Log.e("ScreenCapture", "onCreate error", e);
-            finish();
-        }
-    }
+        ScreenCaptureSender sender = new ScreenCaptureSender(
+                "http://YOUR_SERVER_URL",
+                engine
+        );
 
-    private void startCapture() {
-        try {
-            WindowManager wm = (WindowManager) getSystemService(WINDOW_SERVICE);
-            DisplayMetrics metrics = new DisplayMetrics();
-            wm.getDefaultDisplay().getRealMetrics(metrics);
+        sender.send(fakeBitmap, pendingCommandId);
 
-            int width = metrics.widthPixels;
-            int height = metrics.heightPixels;
-            int density = metrics.densityDpi;
-
-            imageReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2);
-
-            virtualDisplay = mediaProjection.createVirtualDisplay(
-                    "screen_capture",
-                    width,
-                    height,
-                    density,
-                    DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-                    imageReader.getSurface(),
-                    null,
-                    null
-            );
-
-            imageReader.setOnImageAvailableListener(reader -> {
-                Image image = null;
-
-                try {
-                    image = reader.acquireLatestImage();
-                    if (image == null) return;
-
-                    Image.Plane[] planes = image.getPlanes();
-                    ByteBuffer buffer = planes[0].getBuffer();
-
-                    int pixelStride = planes[0].getPixelStride();
-                    int rowStride = planes[0].getRowStride();
-                    int rowPadding = rowStride - pixelStride * width;
-
-                    Bitmap bitmap = Bitmap.createBitmap(
-                            width + rowPadding / pixelStride,
-                            height,
-                            Bitmap.Config.ARGB_8888
-                    );
-
-                    bitmap.copyPixelsFromBuffer(buffer);
-
-                    Bitmap cropped = Bitmap.createBitmap(bitmap, 0, 0, width, height);
-
-                    sender.send(cropped, pendingCommandId);
-
-                    bitmap.recycle();
-
-                } catch (Exception e) {
-                    Log.e("ScreenCapture", "capture error", e);
-                } finally {
-
-                    try {
-                        if (image != null) image.close();
-                    } catch (Exception e) {
-                        Log.e("ScreenCapture", "image close error", e);
-                    }
-
-                    try {
-                        if (imageReader != null) imageReader.close();
-                    } catch (Exception e) {
-                        Log.e("ScreenCapture", "reader close error", e);
-                    }
-
-                    try {
-                        if (virtualDisplay != null) virtualDisplay.release();
-                    } catch (Exception e) {
-                        Log.e("ScreenCapture", "vd release error", e);
-                    }
-
-                    finish();
-                }
-
-            }, null);
-
-        } catch (Exception e) {
-            Log.e("ScreenCapture", "startCapture error", e);
-            finish();
-        }
+        finish();
     }
 }
