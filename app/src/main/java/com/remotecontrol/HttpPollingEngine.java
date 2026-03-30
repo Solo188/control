@@ -1,6 +1,6 @@
 // app/src/main/java/your/package/HttpPollingEngine.java
 
-package your.package;
+package com.remotecontrol;
 
 import android.util.Log;
 
