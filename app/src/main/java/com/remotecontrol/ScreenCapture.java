@@ -1,22 +1,28 @@
 package com.remotecontrol;
 
-import android.graphics.Bitmap;
+/**
+ * ScreenCapture — утилитный класс (ранее содержал мёртвый дублирующий код).
+ *
+ * ИСПРАВЛЕНО:
+ * - Убран мёртвый метод sendScreenshot() с "http://YOUR_SERVER_URL"
+ * - Логика захвата полностью в ScreenCaptureRequestActivity
+ * - Этот класс можно использовать как точку входа для запроса захвата экрана
+ */
+public final class ScreenCapture {
 
-public class ScreenCapture {
+    private ScreenCapture() {}
 
-    public static void sendScreenshot(Bitmap bitmap, int commandId) {
-
+    /**
+     * Запросить захват экрана для указанной команды.
+     * Запускает ScreenCaptureRequestActivity, которая покажет
+     * системный диалог подтверждения MediaProjection.
+     *
+     * @param commandId ID команды, для которой нужен скриншот
+     */
+    public static void capture(int commandId) {
         TelegramService svc = TelegramService.getInstance();
         if (svc == null) return;
 
-        HttpPollingEngine engine = svc.getEngine();
-        if (engine == null) return;
-
-        ScreenCaptureSender sender = new ScreenCaptureSender(
-                "http://YOUR_SERVER_URL",
-                engine
-        );
-
-        sender.send(bitmap, commandId);
+        ScreenCaptureRequestActivity.request(svc, commandId);
     }
 }
