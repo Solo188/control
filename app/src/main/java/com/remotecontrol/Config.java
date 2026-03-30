@@ -1,19 +1,12 @@
 package com.remotecontrol;
 
-/**
- * Config — единственное место для настройки сервера.
- * Замени BASE_URL на актуальный адрес из bore.
- */
 public final class Config {
     private Config() {}
 
-    /**
-     * Адрес твоего HTTP-сервера через bore.
-     * Пример: "http://bore.pub:56485"
-     */
+    // ЗАМЕНИ ПОРТ НА ТОТ, ЧТО В BORE ПРЯМО СЕЙЧАС
     public static final String BASE_URL = "http://bore.pub:43367";
 
-    /** Эндпоинты */
     public static final String ENDPOINT_GET_COMMAND = BASE_URL + "/get_command";
     public static final String ENDPOINT_UPLOAD      = BASE_URL + "/upload";
+    public static final String ENDPOINT_ACK         = BASE_URL + "/ack";
 }
