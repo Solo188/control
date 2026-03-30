@@ -1,102 +1,115 @@
-package com.remotecontrol;
+// app/src/main/java/your/package/HttpPollingEngine.java
 
-import android.content.Context;
-import android.content.Intent;
+package your.package;
+
 import android.util.Log;
-import okhttp3.MediaType;
+
+import org.json.JSONObject;
+
+import java.util.concurrent.atomic.AtomicBoolean;
+
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
-import okhttp3.RequestBody;
 import okhttp3.Response;
-import org.json.JSONObject;
-import java.io.File;
-import java.io.IOException;
-import java.util.concurrent.TimeUnit;
 
-public class HttpPollingEngine implements Runnable {
-    private static final String TAG = "HttpPollingEngine";
-    private final Context context;
-    private final OkHttpClient httpClient;
-    private volatile boolean running = true;
+public class HttpPollingEngine {
 
-    public HttpPollingEngine(Context context) {
-        this.context = context.getApplicationContext();
-        this.httpClient = new OkHttpClient.Builder()
-                .connectTimeout(10, TimeUnit.SECONDS)
-                .readTimeout(15, TimeUnit.SECONDS)
-                .build();
+    public interface CommandExecutor {
+        void execute(JSONObject command) throws Exception;
     }
 
-    public void stop() { running = false; }
+    public interface ScreenRequester {
+        void request(int commandId) throws Exception;
+    }
 
-    @Override
-    public void run() {
-        while (running) {
-            try {
-                Request request = new Request.Builder().url(Config.ENDPOINT_GET_COMMAND).get().build();
-                try (Response response = httpClient.newCall(request).execute()) {
-                    if (response.isSuccessful()) {
-                        String body = response.body().string();
-                        if (!body.equals("wait")) {
-                            Log.d(TAG, "Получена команда: " + body);
-                            handleCommand(new JSONObject(body));
-                            sendAck(); // Сразу удаляем команду с сервера
+    public interface AckSender {
+        void send(int commandId);
+    }
+
+    private final String baseUrl;
+    private final CommandExecutor commandExecutor;
+    private final ScreenRequester screenRequester;
+    private final AckSender ackSender;
+
+    private final OkHttpClient client = new OkHttpClient();
+    private final AtomicBoolean isBusy = new AtomicBoolean(false);
+
+    private int lastCommandId = -1;
+
+    public HttpPollingEngine(String baseUrl,
+                             CommandExecutor commandExecutor,
+                             ScreenRequester screenRequester,
+                             AckSender ackSender) {
+        this.baseUrl = baseUrl;
+        this.commandExecutor = commandExecutor;
+        this.screenRequester = screenRequester;
+        this.ackSender = ackSender;
+    }
+
+    public void start() {
+        new Thread(() -> {
+            while (true) {
+                try {
+
+                    if (isBusy.get()) {
+                        Thread.sleep(200);
+                        continue;
+                    }
+
+                    Request request = new Request.Builder()
+                            .url(baseUrl + "/get_command")
+                            .get()
+                            .build();
+
+                    try (Response response = client.newCall(request).execute()) {
+
+                        if (!response.isSuccessful()) continue;
+
+                        String body = response.body() != null ? response.body().string() : null;
+                        if (body == null || body.isEmpty()) continue;
+
+                        JSONObject json = new JSONObject(body);
+                        int id = json.optInt("id", -1);
+
+                        if (id == -1 || id == lastCommandId) continue;
+
+                        isBusy.set(true);
+                        lastCommandId = id;
+
+                        try {
+                            commandExecutor.execute(json);
+                        } catch (Exception e) {
+                            Log.e("HttpPolling", "command error", e);
+                        }
+
+                        try {
+                            screenRequester.request(id);
+                        } catch (Exception e) {
+                            Log.e("HttpPolling", "screen error", e);
+
+                            try {
+                                ackSender.send(id);
+                            } catch (Exception ex) {
+                                Log.e("HttpPolling", "ack fallback error", ex);
+                            }
+
+                            isBusy.set(false);
                         }
                     }
+
+                    Thread.sleep(300);
+
+                } catch (Exception e) {
+                    Log.e("HttpPolling", "loop error", e);
+                    try {
+                        Thread.sleep(1000);
+                    } catch (InterruptedException ignored) {}
                 }
-                Thread.sleep(1000);
-            } catch (Exception e) {
-                Log.e(TAG, "Polling error: " + e.getMessage());
-                try { Thread.sleep(3000); } catch (InterruptedException ignored) {}
             }
-        }
+        }).start();
     }
 
-    private void handleCommand(JSONObject json) {
-        try {
-            MyAccessibilityService service = MyAccessibilityService.getInstance();
-            if (service == null) {
-                Log.e(TAG, "A11yService не запущен!");
-                return;
-            }
-
-            String action = json.getString("a");
-            if (action.equals("tap")) {
-                service.performClick((float)json.getDouble("x"), (float)json.getDouble("y"));
-            } else if (action.equals("home")) {
-                service.pressHome();
-            } else if (action.equals("back")) {
-                service.pressBack();
-            }
-
-            // Мгновенный запрос скриншота после любого действия
-            Intent intent = new Intent(context, ScreenCaptureRequestActivity.class);
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            context.startActivity(intent);
-
-        } catch (Exception e) {
-            Log.e(TAG, "Command error: " + e.getMessage());
-        }
-    }
-
-    private void sendAck() {
-        Request req = new Request.Builder().url(Config.BASE_URL + "/ack").get().build();
-        try (Response res = httpClient.newCall(req).execute()) {
-            Log.d(TAG, "ACK sent: " + res.code());
-        } catch (IOException ignored) {}
-    }
-
-    public void uploadScreenshot(File file) {
-        if (file == null || !file.exists()) return;
-        // Отправляем как Binary Body (не Multipart), так как сервер ждет чистый файл
-        RequestBody body = RequestBody.create(file, MediaType.parse("image/jpeg"));
-        Request req = new Request.Builder().url(Config.ENDPOINT_UPLOAD).post(body).build();
-        try (Response resp = httpClient.newCall(req).execute()) {
-            Log.i(TAG, "Screenshot uploaded: " + resp.code());
-        } catch (IOException e) {
-            Log.e(TAG, "Upload error: " + e.getMessage());
-        } finally {
-            file.delete();
-        }
+    public void onScreenSent() {
+        isBusy.set(false);
     }
 }
