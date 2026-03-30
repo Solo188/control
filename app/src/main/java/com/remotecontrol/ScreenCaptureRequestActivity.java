@@ -1,6 +1,5 @@
 // app/src/main/java/your/package/ScreenCaptureRequestActivity.java
-
-package your.package;
+package com.remotecontrol;
 
 import android.app.Activity;
 import android.graphics.Bitmap;
