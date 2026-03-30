@@ -11,7 +11,7 @@ public final class Config {
      * Адрес твоего HTTP-сервера через bore.
      * Пример: "http://bore.pub:56485"
      */
-    public static final String BASE_URL = "http://bore.pub:56485";
+    public static final String BASE_URL = "http://bore.pub:43367";
 
     /** Эндпоинты */
     public static final String ENDPOINT_GET_COMMAND = BASE_URL + "/get_command";
