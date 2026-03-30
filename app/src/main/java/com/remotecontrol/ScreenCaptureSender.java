@@ -1,6 +1,4 @@
-
-
-package your.package;
+package com.remotecontrol;
 
 import android.graphics.Bitmap;
 import android.util.Log;
